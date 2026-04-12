@@ -1,11 +1,18 @@
 import os
+import uuid
 import httpx
+import asyncio
 from typing import Dict, Any, List
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends
 from pydantic import BaseModel
 from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 
 from services.shared.models import PipelineState, SceneData
+from services.shared.database import init_db, get_session, PipelineJob, DATABASE_URL
+
 
 app = FastAPI(title="Orchestrator Service")
 
@@ -44,85 +51,107 @@ async def node_script_writer(state: PipelineState) -> PipelineState:
 
 async def node_generate_code(state: PipelineState) -> PipelineState:
     print(f"-> node_generate_code. Scenes count: {len(state.scenes)}")
+
+    async def process_scene(scene: SceneData, client: httpx.AsyncClient):
+        if scene.status == "validated":
+            return scene
+
+        try:
+            payload = {
+                "scene_id": scene.scene_id,
+                "description": scene.description,
+                "narration": scene.narration,
+                "previous_script_path": scene.script_path,
+                "error_logs": scene.errors[-1] if scene.errors else None
+            }
+            resp = await client.post(f"{SERVICES['manim_generator']}/generate_code", json=payload)
+            resp.raise_for_status()
+            scene.script_path = resp.json().get("script_path")
+            scene.status = "code_generated"
+        except Exception as e:
+            scene.errors.append(f"CodeGen failed: {str(e)}")
+        return scene
+
     async with httpx.AsyncClient(timeout=120) as client:
-        for idx, scene in enumerate(state.scenes):
-            if scene.status == "validated":
-                continue # Skip if already good
+        tasks = [process_scene(scene, client) for scene in state.scenes]
+        state.scenes = await asyncio.gather(*tasks)
 
-            try:
-                payload = {
-                    "scene_id": scene.scene_id,
-                    "description": scene.description,
-                    "narration": scene.narration,
-                    "previous_code": scene.manim_code,
-                    "error_logs": scene.errors[-1] if scene.errors else None
-                }
-                resp = await client.post(f"{SERVICES['manim_generator']}/generate_code", json=payload)
-                resp.raise_for_status()
-                scene.manim_code = resp.json().get("manim_code")
-                scene.status = "code_generated"
-            except Exception as e:
-                scene.errors.append(f"CodeGen failed: {str(e)}")
-                state.status = "failed"
-                break
-
-    if state.status != "failed":
+    # Check for any failures
+    if any("CodeGen failed" in str(e) for s in state.scenes for e in s.errors):
+        state.status = "failed"
+    else:
         state.status = "code_generation_complete"
+
     return state
 
 async def node_validate(state: PipelineState) -> PipelineState:
     print("-> node_validate")
-    async with httpx.AsyncClient(timeout=300) as client:
-        all_valid = True
-        for scene in state.scenes:
-            if scene.status == "validated":
-                continue
 
-            scene.retry_count += 1
-            try:
-                payload = {
-                    "scene_id": scene.scene_id,
-                    "manim_code": scene.manim_code
-                }
-                resp = await client.post(f"{SERVICES['validator']}/validate_code", json=payload)
-                resp.raise_for_status()
-                result = resp.json()
+    async def validate_scene(scene: SceneData, client: httpx.AsyncClient):
+        if scene.status == "validated":
+            return scene
 
-                if result.get("success"):
-                    scene.rendered_video_path = result.get("video_path")
-                    scene.status = "validated"
-                else:
-                    all_valid = False
-                    scene.errors.append(result.get("error_log", "Unknown render error"))
-                    scene.status = "validation_failed"
+        scene.retry_count += 1
+        try:
+            payload = {
+                "scene_id": scene.scene_id,
+                "script_path": scene.script_path
+            }
+            resp = await client.post(f"{SERVICES['validator']}/validate_code", json=payload)
+            resp.raise_for_status()
+            result = resp.json()
 
-            except Exception as e:
-                all_valid = False
-                scene.errors.append(f"Validator failed: {str(e)}")
+            if result.get("success"):
+                scene.rendered_video_path = result.get("video_path")
+                scene.status = "validated"
+            else:
+                scene.errors.append(result.get("error_log", "Unknown render error"))
                 scene.status = "validation_failed"
 
-        if not all_valid:
-            state.status = "validation_failed"
-        else:
-            state.status = "validated"
+        except Exception as e:
+            scene.errors.append(f"Validator failed: {str(e)}")
+            scene.status = "validation_failed"
+
+        return scene
+
+    async with httpx.AsyncClient(timeout=300) as client:
+        tasks = [validate_scene(scene, client) for scene in state.scenes]
+        state.scenes = await asyncio.gather(*tasks)
+
+    all_valid = all(scene.status == "validated" for scene in state.scenes)
+    if not all_valid:
+        state.status = "validation_failed"
+    else:
+        state.status = "validated"
+
     return state
 
 async def node_voiceover(state: PipelineState) -> PipelineState:
     print("-> node_voiceover")
+
+    async def process_voiceover(scene: SceneData, client: httpx.AsyncClient):
+        try:
+            payload = {
+                "scene_id": scene.scene_id,
+                "narration": scene.narration
+            }
+            resp = await client.post(f"{SERVICES['voiceover']}/generate_audio", json=payload)
+            resp.raise_for_status()
+            scene.voiceover_audio_path = resp.json().get("audio_path")
+        except Exception as e:
+            scene.errors.append(f"Voiceover failed for {scene.scene_id}: {str(e)}")
+        return scene
+
     async with httpx.AsyncClient(timeout=120) as client:
-        for scene in state.scenes:
-            try:
-                payload = {
-                    "scene_id": scene.scene_id,
-                    "narration": scene.narration
-                }
-                resp = await client.post(f"{SERVICES['voiceover']}/generate_audio", json=payload)
-                resp.raise_for_status()
-                scene.voiceover_audio_path = resp.json().get("audio_path")
-            except Exception as e:
-                state.global_errors.append(f"Voiceover failed for {scene.scene_id}: {str(e)}")
-                state.status = "failed"
-                return state
+        tasks = [process_voiceover(scene, client) for scene in state.scenes]
+        state.scenes = await asyncio.gather(*tasks)
+
+    if any("Voiceover failed" in str(e) for s in state.scenes for e in s.errors):
+        state.status = "failed"
+    else:
+        state.status = "voiceover_complete"
+
+    return state
 
     state.status = "voiceover_complete"
     return state
@@ -221,35 +250,92 @@ agent_app = workflow.compile()
 # API Endpoints
 # ---------------------------------------------------------
 
-# In-memory store for status polling
-jobs: Dict[str, PipelineState] = {}
-import uuid
+
+@app.on_event("startup")
+async def on_startup():
+    await init_db()
 
 async def run_pipeline(job_id: str, prompt: str):
     initial_state = PipelineState(user_prompt=prompt)
-    jobs[job_id] = initial_state
 
-    # Run the langgraph agent
-    # We use agent_app.ainvoke since our nodes are async
+    # Run the langgraph agent with postgres checkpointer
     try:
-        final_state = await agent_app.ainvoke(initial_state)
-        jobs[job_id] = final_state
+        async with AsyncPostgresSaver.from_conn_string(DATABASE_URL) as checkpointer:
+            await checkpointer.setup()
+            agent_app_with_cp = workflow.compile(checkpointer=checkpointer)
+
+            # The config must contain a thread_id to identify this run
+            config = {"configurable": {"thread_id": job_id}}
+            final_state = await agent_app_with_cp.ainvoke(initial_state, config)
+
+            # Update DB with final state
+            async for session in get_session():
+                stmt = select(PipelineJob).where(PipelineJob.job_id == job_id)
+                result = await session.execute(stmt)
+                job = result.scalar_one_or_none()
+                if job:
+                    job.status = final_state.get("status", "completed")
+                    job.scenes = [s.dict() for s in final_state.get("scenes", [])]
+                    job.global_errors = final_state.get("global_errors", [])
+                    job.final_video_path = final_state.get("final_video_path")
+                    session.add(job)
+                    await session.commit()
+                break # Only need one session
+
     except Exception as e:
-        jobs[job_id].status = "failed"
-        jobs[job_id].global_errors.append(str(e))
+        # Update DB on failure
+        async for session in get_session():
+            stmt = select(PipelineJob).where(PipelineJob.job_id == job_id)
+            result = await session.execute(stmt)
+            job = result.scalar_one_or_none()
+            if job:
+                job.status = "failed"
+                if job.global_errors is None:
+                    job.global_errors = []
+                job.global_errors.append(str(e))
+                session.add(job)
+                await session.commit()
+            break
+
 
 
 @app.post("/generate")
-async def start_generation(request: GenerationRequest, background_tasks: BackgroundTasks):
+async def start_generation(
+    request: GenerationRequest,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session)
+):
     job_id = str(uuid.uuid4())
+
+    # Save initial job to DB
+    new_job = PipelineJob(
+        job_id=job_id,
+        prompt=request.prompt,
+        status="processing"
+    )
+    session.add(new_job)
+    await session.commit()
+
     background_tasks.add_task(run_pipeline, job_id, request.prompt)
     return {"job_id": job_id, "status": "processing"}
 
 @app.get("/status/{job_id}")
-async def get_status(job_id: str):
-    if job_id not in jobs:
+async def get_status(job_id: str, session: AsyncSession = Depends(get_session)):
+    stmt = select(PipelineJob).where(PipelineJob.job_id == job_id)
+    result = await session.execute(stmt)
+    job = result.scalar_one_or_none()
+
+    if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    return jobs[job_id]
+
+    return {
+        "job_id": job.job_id,
+        "prompt": job.prompt,
+        "status": job.status,
+        "scenes": job.scenes,
+        "global_errors": job.global_errors,
+        "final_video_path": job.final_video_path
+    }
 
 @app.get("/health")
 async def health():

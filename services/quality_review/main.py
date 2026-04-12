@@ -1,6 +1,6 @@
 import os
 import json
-import subprocess
+import asyncio
 from fastapi import FastAPI, HTTPException
 from services.shared.models import ReviewRequest, ReviewResponse
 
@@ -25,29 +25,45 @@ async def review(request: ReviewRequest):
     ]
 
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        data = json.loads(result.stdout)
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
 
-        # Check streams
-        streams = data.get("streams", [])
-        has_video = any(s.get("codec_type") == "video" for s in streams)
-        has_audio = any(s.get("codec_type") == "audio" for s in streams)
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=60)
 
-        if not has_video:
-            issues.append("Missing video stream")
-        if not has_audio:
-            issues.append("Missing audio stream")
+            if process.returncode != 0:
+                issues.append(f"ffprobe execution failed with return code {process.returncode}: {stderr.decode()}")
+            else:
+                data = json.loads(stdout.decode())
 
-        # Get duration
-        format_info = data.get("format", {})
-        duration_str = format_info.get("duration", "0")
-        duration = float(duration_str)
+                # Check streams
+                streams = data.get("streams", [])
+                has_video = any(s.get("codec_type") == "video" for s in streams)
+                has_audio = any(s.get("codec_type") == "audio" for s in streams)
 
-        if duration <= 0:
-            issues.append("Video has zero duration")
+                if not has_video:
+                    issues.append("Missing video stream")
+                if not has_audio:
+                    issues.append("Missing audio stream")
 
-    except subprocess.CalledProcessError as e:
-        issues.append(f"ffprobe execution failed: {str(e)}")
+                # Get duration
+                format_info = data.get("format", {})
+                duration_str = format_info.get("duration", "0")
+                duration = float(duration_str)
+
+                if duration <= 0:
+                    issues.append("Video has zero duration")
+
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.communicate()
+            issues.append("ffprobe execution timed out after 60 seconds")
+        except asyncio.CancelledError:
+            process.terminate()
+            raise
     except Exception as e:
         issues.append(f"Analysis error: {str(e)}")
 

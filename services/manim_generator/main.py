@@ -11,6 +11,8 @@ api_key = os.environ.get("GEMINI_API_KEY")
 if api_key:
     genai.configure(api_key=api_key)
 
+WORKSPACE_DIR = "/workspace"
+
 def extract_python_code(text: str) -> str:
     # Match python code blocks
     pattern = r"```python(.*?)```"
@@ -43,14 +45,17 @@ async def generate_code(request: CodeGenRequest):
     Narration (for timing context): {request.narration}
     """
 
-    if request.error_logs and request.previous_code:
+    if request.error_logs and request.previous_script_path and os.path.exists(request.previous_script_path):
+        with open(request.previous_script_path, "r") as f:
+            previous_code = f.read()
+
         prompt += f"""
 
     The previous code failed with the following errors. Please fix it.
 
     Previous Code:
     ```python
-    {request.previous_code}
+    {previous_code}
     ```
 
     Error Logs:
@@ -67,7 +72,14 @@ async def generate_code(request: CodeGenRequest):
         raw_text = response.text
         code = extract_python_code(raw_text)
 
-        return CodeGenResponse(manim_code=code)
+        scene_dir = os.path.join(WORKSPACE_DIR, request.scene_id)
+        os.makedirs(scene_dir, exist_ok=True)
+        script_path = os.path.join(scene_dir, "scene.py")
+
+        with open(script_path, "w") as f:
+            f.write(code)
+
+        return CodeGenResponse(script_path=script_path)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

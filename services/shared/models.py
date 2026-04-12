@@ -5,7 +5,7 @@ class SceneData(BaseModel):
     scene_id: str
     description: str
     narration: str
-    manim_code: Optional[str] = None
+    script_path: Optional[str] = None
     rendered_video_path: Optional[str] = None
     voiceover_audio_path: Optional[str] = None
     assembled_video_path: Optional[str] = None
@@ -30,15 +30,15 @@ class CodeGenRequest(BaseModel):
     scene_id: str
     description: str
     narration: str
-    previous_code: Optional[str] = None
+    previous_script_path: Optional[str] = None
     error_logs: Optional[str] = None
 
 class CodeGenResponse(BaseModel):
-    manim_code: str
+    script_path: str
 
 class ValidationRequest(BaseModel):
     scene_id: str
-    manim_code: str
+    script_path: str
 
 class ValidationResponse(BaseModel):
     success: bool

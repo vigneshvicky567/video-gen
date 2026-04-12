@@ -12,6 +12,7 @@ services:
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
     depends_on:
+      - db
       - script_writer
       - manim_generator
       - validator
@@ -78,3 +79,17 @@ services:
     volumes:
       - .:/app
       - ./workspace:/workspace
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: manim_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

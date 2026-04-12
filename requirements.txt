@@ -9,3 +9,7 @@ manim
 pyttsx3
 moviepy
 python-dotenv
+sqlmodel
+asyncpg
+langgraph-checkpoint-postgres
+psycopg[binary]

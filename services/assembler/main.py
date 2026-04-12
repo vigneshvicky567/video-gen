@@ -1,5 +1,5 @@
 import os
-import subprocess
+import asyncio
 from fastapi import FastAPI, HTTPException
 from services.shared.models import AssembleRequest, AssembleResponse
 
@@ -38,9 +38,26 @@ async def assemble(request: AssembleRequest):
             merged_path
         ]
 
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"Failed to merge scene {idx}: {result.stderr}")
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+                if process.returncode != 0:
+                    raise HTTPException(status_code=500, detail=f"Failed to merge scene {idx}: {stderr.decode()}")
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.communicate()
+                raise HTTPException(status_code=500, detail=f"Merge for scene {idx} timed out.")
+            except asyncio.CancelledError:
+                process.terminate()
+                raise
+        except Exception as e:
+             raise HTTPException(status_code=500, detail=f"Failed to execute ffmpeg for scene {idx}: {str(e)}")
 
         scene_clips.append(merged_path)
 
@@ -63,9 +80,33 @@ async def assemble(request: AssembleRequest):
         final_output
     ]
 
-    concat_result = subprocess.run(concat_cmd, capture_output=True, text=True)
-    if concat_result.returncode != 0:
-        raise HTTPException(status_code=500, detail=f"Failed to concatenate scenes: {concat_result.stderr}")
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *concat_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+            if process.returncode != 0:
+                raise HTTPException(status_code=500, detail=f"Failed to concatenate scenes: {stderr.decode()}")
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.communicate()
+            raise HTTPException(status_code=500, detail="Concatenation timed out.")
+        except asyncio.CancelledError:
+            process.terminate()
+            raise
+    except Exception as e:
+         raise HTTPException(status_code=500, detail=f"Failed to execute ffmpeg for concat: {str(e)}")
+
+    # Clean up intermediate files
+    for clip in scene_clips:
+        if os.path.exists(clip):
+            os.remove(clip)
+    if os.path.exists(concat_file_path):
+        os.remove(concat_file_path)
 
     return AssembleResponse(final_video_path=final_output)
 
