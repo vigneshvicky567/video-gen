@@ -1,0 +1,95 @@
+version: '3.8'
+
+services:
+  base:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.base
+    image: base-manim-agent
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.orchestrator
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./workspace:/workspace
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - SCRIPT_WRITER_URL=http://script-writer:8001
+      - CODE_GENERATOR_URL=http://code-generator:8002
+      - VALIDATOR_URL=http://validator:8003
+      - VOICEOVER_URL=http://voiceover:8004
+      - ASSEMBLER_URL=http://assembler:8005
+    depends_on:
+      - base
+      - script-writer
+      - code-generator
+      - validator
+      - voiceover
+      - assembler
+
+  script-writer:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.script-writer
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./workspace:/workspace
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    depends_on:
+      - base
+
+  code-generator:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.code-generator
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./workspace:/workspace
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    depends_on:
+      - base
+
+  validator:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.validator
+    ports:
+      - "8003:8003"
+    volumes:
+      - ./workspace:/workspace
+    depends_on:
+      - base
+
+  voiceover:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.voiceover
+    ports:
+      - "8004:8004"
+    volumes:
+      - ./workspace:/workspace
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    depends_on:
+      - base
+
+  assembler:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.assembler
+    ports:
+      - "8005:8005"
+    volumes:
+      - ./workspace:/workspace
+    depends_on:
+      - base
+
+volumes:
+  workspace:
