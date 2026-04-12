@@ -13,7 +13,7 @@ from typing import Literal
 logger = logging.getLogger(__name__)
 
 async def _post(url: str, json_data: dict) -> dict:
-    async with httpx.AsyncClient(timeout=300.0) as client:
+    async with httpx.AsyncClient(timeout=settings.SERVICE_HTTP_TIMEOUT_SECONDS) as client:
         response = await client.post(url, json=json_data)
         response.raise_for_status()
         return response.json()

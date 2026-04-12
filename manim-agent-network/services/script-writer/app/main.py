@@ -4,7 +4,7 @@ from shared.schemas.responses import ScriptWriterResponse
 from shared.schemas.common import ScriptResponse
 from shared.config import settings
 from google import genai
-from google.genai.types import GenerateContentConfig
+from google.genai.types import GenerateContentConfig, HttpOptions
 import json
 import logging
 
@@ -13,7 +13,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize Gemini Client
-client = genai.Client(api_key=settings.GEMINI_API_KEY)
+client = genai.Client(
+    api_key=settings.GEMINI_API_KEY,
+    http_options=HttpOptions(timeout=settings.GEMINI_REQUEST_TIMEOUT_MS),
+)
 
 @app.post("/generate", response_model=ScriptWriterResponse)
 async def generate_script(request: ScriptWriterRequest):
@@ -32,7 +35,7 @@ async def generate_script(request: ScriptWriterRequest):
 
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=settings.SCRIPT_WRITER_MODEL,
             contents=prompt,
             config=GenerateContentConfig(
                 response_mime_type="application/json",

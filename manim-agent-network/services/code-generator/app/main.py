@@ -3,7 +3,9 @@ from shared.schemas.requests import CodeGeneratorRequest
 from shared.schemas.responses import CodeGeneratorResponse
 from shared.config import settings
 from google import genai
+from google.genai.types import HttpOptions
 import os
+import json
 import logging
 from pydantic import BaseModel
 
@@ -11,7 +13,10 @@ app = FastAPI(title="Code Generator Service")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-client = genai.Client(api_key=settings.GEMINI_API_KEY)
+client = genai.Client(
+    api_key=settings.GEMINI_API_KEY,
+    http_options=HttpOptions(timeout=settings.GEMINI_REQUEST_TIMEOUT_MS),
+)
 
 class CodeGenOutput(BaseModel):
     python_code: str
@@ -59,7 +64,7 @@ async def generate_code(request: CodeGeneratorRequest):
 
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-pro", # Use pro for coding tasks
+            model=settings.CODE_GENERATOR_MODEL,
             contents=prompt,
             config=genai.types.GenerateContentConfig(
                 temperature=0.2,
