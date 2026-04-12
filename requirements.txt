@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+pydantic
+httpx
+google-generativeai
+langgraph
+langchain-core
+manim
+pyttsx3
+moviepy
+python-dotenv

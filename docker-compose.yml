@@ -1,0 +1,80 @@
+version: "3.8"
+
+services:
+  orchestrator:
+    build: .
+    command: uvicorn services.orchestrator.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - ./workspace:/workspace
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    depends_on:
+      - script_writer
+      - manim_generator
+      - validator
+      - voiceover
+      - assembler
+      - quality_review
+
+  script_writer:
+    build: .
+    command: uvicorn services.script_writer.main:app --host 0.0.0.0 --port 8001 --reload
+    ports:
+      - "8001:8001"
+    volumes:
+      - .:/app
+      - ./workspace:/workspace
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+
+  manim_generator:
+    build: .
+    command: uvicorn services.manim_generator.main:app --host 0.0.0.0 --port 8002 --reload
+    ports:
+      - "8002:8002"
+    volumes:
+      - .:/app
+      - ./workspace:/workspace
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+
+  validator:
+    build: .
+    command: uvicorn services.validator.main:app --host 0.0.0.0 --port 8003 --reload
+    ports:
+      - "8003:8003"
+    volumes:
+      - .:/app
+      - ./workspace:/workspace
+
+  voiceover:
+    build: .
+    command: uvicorn services.voiceover.main:app --host 0.0.0.0 --port 8004 --reload
+    ports:
+      - "8004:8004"
+    volumes:
+      - .:/app
+      - ./workspace:/workspace
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+
+  assembler:
+    build: .
+    command: uvicorn services.assembler.main:app --host 0.0.0.0 --port 8005 --reload
+    ports:
+      - "8005:8005"
+    volumes:
+      - .:/app
+      - ./workspace:/workspace
+
+  quality_review:
+    build: .
+    command: uvicorn services.quality_review.main:app --host 0.0.0.0 --port 8006 --reload
+    ports:
+      - "8006:8006"
+    volumes:
+      - .:/app
+      - ./workspace:/workspace
