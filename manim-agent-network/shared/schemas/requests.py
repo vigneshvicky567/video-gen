@@ -9,7 +9,7 @@ class CodeGeneratorRequest(BaseModel):
     scene: ScenePlan
     job_id: str
     error_log: Optional[str] = None # Present if retry
-    previous_code: Optional[str] = None # Present if retry
+    previous_code_path: Optional[str] = None # Present if retry
 
 class ValidatorRequest(BaseModel):
     job_id: str

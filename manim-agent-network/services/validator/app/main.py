@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from shared.schemas.requests import ValidatorRequest
 from shared.schemas.responses import ValidatorResponse
 from shared.config import settings
-import subprocess
+import asyncio
 import os
 import logging
 import glob
@@ -31,7 +31,26 @@ async def validate_code(request: ValidatorRequest):
     ]
 
     try:
-        process = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=120)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            logger.error("Render timed out.")
+            return ValidatorResponse(
+                scene_id=request.scene_id,
+                success=False,
+                error_log="Manim render process timed out after 120 seconds."
+            )
+
+        stdout = stdout_bytes.decode()
+        stderr = stderr_bytes.decode()
 
         if process.returncode == 0:
             logger.info(f"Render successful for scene {request.scene_id}")
@@ -54,20 +73,20 @@ async def validate_code(request: ValidatorRequest):
                 )
         else:
             logger.warning(f"Render failed for scene {request.scene_id}")
-            error_log = process.stderr if process.stderr else process.stdout
+            error_log = stderr if stderr else stdout
             return ValidatorResponse(
                 scene_id=request.scene_id,
                 success=False,
                 error_log=error_log[-2000:] # Return last 2000 chars to avoid prompt bloat
             )
 
-    except subprocess.TimeoutExpired:
-        logger.error("Render timed out.")
-        return ValidatorResponse(
-            scene_id=request.scene_id,
-            success=False,
-            error_log="Manim render process timed out after 120 seconds."
-        )
+    except asyncio.CancelledError:
+        logger.error("Request cancelled, terminating subprocess.")
+        if process:
+            process.kill()
+            await process.wait()
+        raise
+
     except Exception as e:
         logger.error(f"Unexpected error during render: {str(e)}")
         return ValidatorResponse(

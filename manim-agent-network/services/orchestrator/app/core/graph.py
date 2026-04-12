@@ -34,6 +34,7 @@ async def code_generator_node(state: LangGraphState):
         job_id = state["job_id"]
 
         new_code_paths = state.get("code_paths", {})
+        new_previous_code_paths = state.get("previous_code_paths", {})
 
         # In a real massively parallel setup, we might use asyncio.gather here.
         # For LangGraph simple nodes, iterating is fine.
@@ -47,22 +48,16 @@ async def code_generator_node(state: LangGraphState):
                     "scene": scene,
                     "job_id": job_id,
                     "error_log": state.get("error_logs", {}).get(scene_id),
-                    "previous_code": state.get("previous_code", {}).get(scene_id)
+                    "previous_code_path": state.get("previous_code_paths", {}).get(scene_id)
                 }
 
                 res = await _post(f"{settings.CODE_GENERATOR_URL}/generate", request_data)
 
                 new_code_paths[scene_id] = res["code_path"]
+                new_previous_code_paths[scene_id] = res["code_path"]
 
-                # Keep track of the generated code to feed back on failure
-                with open(res["code_path"], "r") as f:
-                    code_content = f.read()
 
-                if "previous_code" not in state:
-                    state["previous_code"] = {}
-                state["previous_code"][scene_id] = code_content
-
-        return {"code_paths": new_code_paths, "status": "code_generation"}
+        return {"code_paths": new_code_paths, "previous_code_paths": new_previous_code_paths, "status": "code_generation"}
     except Exception as e:
         logger.error(f"Code Generator failed: {e}")
         return {"status": "failed", "overall_error": str(e)}

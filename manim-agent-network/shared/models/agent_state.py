@@ -13,7 +13,7 @@ class LangGraphState(TypedDict):
     audio_paths: Dict[int, str]
     retry_counts: Dict[int, int]
     error_logs: Dict[int, str]
-    previous_code: Dict[int, str]
+    previous_code_paths: Dict[int, str]
 
     final_output_path: Optional[str]
     overall_error: Optional[str]

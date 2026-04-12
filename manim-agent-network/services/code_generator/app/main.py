@@ -2,16 +2,19 @@ from fastapi import FastAPI
 from shared.schemas.requests import CodeGeneratorRequest
 from shared.schemas.responses import CodeGeneratorResponse
 from shared.config import settings
-from google import genai
+import google.genai as genai
 import os
 import logging
 from pydantic import BaseModel
+import json
 
 app = FastAPI(title="Code Generator Service")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-client = genai.Client(api_key=settings.GEMINI_API_KEY)
+# DO NOT instantiate at module level, so it can pick up the mocked setting
+def get_client():
+    return genai.Client(api_key=settings.GEMINI_API_KEY)
 
 class CodeGenOutput(BaseModel):
     python_code: str
@@ -21,15 +24,23 @@ async def generate_code(request: CodeGeneratorRequest):
     logger.info(f"Generating Manim code for job {request.job_id}, scene {request.scene.scene_id}")
 
     # Construct prompt based on whether this is a retry or first attempt
-    if request.error_log and request.previous_code:
+    if request.error_log and request.previous_code_path:
         logger.info(f"Retry attempt for scene {request.scene.scene_id}. Providing error context.")
+
+        try:
+            with open(request.previous_code_path, "r") as f:
+                previous_code = f.read()
+        except Exception as e:
+            logger.error(f"Failed to read previous code from {request.previous_code_path}: {e}")
+            previous_code = "# Previous code could not be loaded."
+
         prompt = f"""
         You are an expert Python developer using Manim Community Edition (Manim CE).
         You previously wrote Manim code for a scene, but it failed to render.
 
         Previous Code:
         ```python
-        {request.previous_code}
+        {previous_code}
         ```
 
         Error Log:
@@ -58,6 +69,7 @@ async def generate_code(request: CodeGeneratorRequest):
         """
 
     try:
+        client = get_client()
         response = client.models.generate_content(
             model="gemini-2.5-pro", # Use pro for coding tasks
             contents=prompt,
@@ -68,7 +80,10 @@ async def generate_code(request: CodeGeneratorRequest):
             )
         )
 
-        code = response.parsed.python_code if response.parsed else json.loads(response.text)["python_code"]
+        try:
+             code = response.parsed.python_code
+        except:
+             code = json.loads(response.text)["python_code"]
 
         # Save code to workspace
         temp_dir = os.path.join(settings.WORKSPACE_DIR, "temp", request.job_id)

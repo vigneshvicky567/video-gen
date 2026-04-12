@@ -11,4 +11,6 @@ class Settings(BaseSettings):
     VOICEOVER_URL: str = os.getenv("VOICEOVER_URL", "http://voiceover:8004")
     ASSEMBLER_URL: str = os.getenv("ASSEMBLER_URL", "http://assembler:8005")
 
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./jobs.db")
+
 settings = Settings()
