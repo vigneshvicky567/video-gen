@@ -1,0 +1,15 @@
+{
+  "corpus_tokens": 31562,
+  "corpus_words": 23672,
+  "nodes": 82,
+  "edges": 107,
+  "avg_query_tokens": 668,
+  "reduction_ratio": 47.2,
+  "per_question": [
+    {
+      "question": "what is the main entry point",
+      "query_tokens": 668,
+      "reduction": 47.2
+    }
+  ]
+}

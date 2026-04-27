@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Dict, List, Optional
 from shared.schemas.common import ScriptResponse
 
 class ScriptWriterResponse(BaseModel):
@@ -21,3 +21,6 @@ class VoiceoverResponse(BaseModel):
 
 class AssemblerResponse(BaseModel):
     final_output_path: str
+
+class ImageFetcherResponse(BaseModel):
+    image_paths: Dict[int, List[str]]

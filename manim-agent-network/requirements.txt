@@ -3,6 +3,7 @@ uvicorn>=0.23.0
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
 google-genai>=1.7.0
+openai>=1.0.0
 langgraph>=0.0.25
 langchain-core>=0.1.0
 httpx>=0.24.0
@@ -13,3 +14,13 @@ python-dotenv>=1.0.0
 # Coqui TTS - uncomment if you want local TTS with voice cloning
 # Note: Requires manual installation from source or conda, not available on PyPI
 # tts @ git+https://github.com/coqui-ai/TTS
+
+# Fish Audio S2 Pro local inference
+# The fish-speech repo must be cloned and installed separately (see .env.template).
+# httpx is already listed above and is used to call the local API server.
+
+# LangSmith Tracing
+langsmith>=0.1.0
+
+# Testing
+hypothesis==6.112.2

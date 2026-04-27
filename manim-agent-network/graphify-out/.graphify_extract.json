@@ -1,0 +1,2760 @@
+{
+  "nodes": [
+    {
+      "id": "services_assembler_app_main_py",
+      "label": "main.py",
+      "file_type": "code",
+      "source_file": "services\\assembler\\app\\main.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "main_assemble_video",
+      "label": "assemble_video()",
+      "file_type": "code",
+      "source_file": "services\\assembler\\app\\main.py",
+      "source_location": "L14"
+    },
+    {
+      "id": "main_health",
+      "label": "health()",
+      "file_type": "code",
+      "source_file": "services\\assembler\\app\\main.py",
+      "source_location": "L89"
+    },
+    {
+      "id": "services_assembler_app_init_py",
+      "label": "__init__.py",
+      "file_type": "code",
+      "source_file": "services\\assembler\\app\\__init__.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "services_code_generator_app_main_py",
+      "label": "main.py",
+      "file_type": "code",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "main_codegenoutput",
+      "label": "CodeGenOutput",
+      "file_type": "code",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L37"
+    },
+    {
+      "id": "basemodel",
+      "label": "BaseModel",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "main_generate_code",
+      "label": "generate_code()",
+      "file_type": "code",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L41"
+    },
+    {
+      "id": "main_health",
+      "label": "health()",
+      "file_type": "code",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L174"
+    },
+    {
+      "id": "services_code_generator_app_init_py",
+      "label": "__init__.py",
+      "file_type": "code",
+      "source_file": "services\\code-generator\\app\\__init__.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "services_orchestrator_app_main_py",
+      "label": "main.py",
+      "file_type": "code",
+      "source_file": "services\\orchestrator\\app\\main.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "main_run_pipeline",
+      "label": "run_pipeline()",
+      "file_type": "code",
+      "source_file": "services\\orchestrator\\app\\main.py",
+      "source_location": "L29"
+    },
+    {
+      "id": "main_start_generation",
+      "label": "start_generation()",
+      "file_type": "code",
+      "source_file": "services\\orchestrator\\app\\main.py",
+      "source_location": "L109"
+    },
+    {
+      "id": "main_get_job_status",
+      "label": "get_job_status()",
+      "file_type": "code",
+      "source_file": "services\\orchestrator\\app\\main.py",
+      "source_location": "L125"
+    },
+    {
+      "id": "main_health",
+      "label": "health()",
+      "file_type": "code",
+      "source_file": "services\\orchestrator\\app\\main.py",
+      "source_location": "L131"
+    },
+    {
+      "id": "services_orchestrator_app_init_py",
+      "label": "__init__.py",
+      "file_type": "code",
+      "source_file": "services\\orchestrator\\app\\__init__.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "services_orchestrator_app_core_graph_py",
+      "label": "graph.py",
+      "file_type": "code",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "graph_post",
+      "label": "_post()",
+      "file_type": "code",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L15"
+    },
+    {
+      "id": "graph_script_writer_node",
+      "label": "script_writer_node()",
+      "file_type": "code",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L21"
+    },
+    {
+      "id": "graph_code_generator_node",
+      "label": "code_generator_node()",
+      "file_type": "code",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L30"
+    },
+    {
+      "id": "graph_validator_node",
+      "label": "validator_node()",
+      "file_type": "code",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L70"
+    },
+    {
+      "id": "graph_validation_router",
+      "label": "validation_router()",
+      "file_type": "code",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L112"
+    },
+    {
+      "id": "graph_voiceover_node",
+      "label": "voiceover_node()",
+      "file_type": "code",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L139"
+    },
+    {
+      "id": "graph_assembler_node",
+      "label": "assembler_node()",
+      "file_type": "code",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L162"
+    },
+    {
+      "id": "services_script_writer_app_main_py",
+      "label": "main.py",
+      "file_type": "code",
+      "source_file": "services\\script-writer\\app\\main.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "main_generate_script",
+      "label": "generate_script()",
+      "file_type": "code",
+      "source_file": "services\\script-writer\\app\\main.py",
+      "source_location": "L37"
+    },
+    {
+      "id": "main_health",
+      "label": "health()",
+      "file_type": "code",
+      "source_file": "services\\script-writer\\app\\main.py",
+      "source_location": "L137"
+    },
+    {
+      "id": "services_script_writer_app_init_py",
+      "label": "__init__.py",
+      "file_type": "code",
+      "source_file": "services\\script-writer\\app\\__init__.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "services_validator_app_main_py",
+      "label": "main.py",
+      "file_type": "code",
+      "source_file": "services\\validator\\app\\main.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "main_validate_code",
+      "label": "validate_code()",
+      "file_type": "code",
+      "source_file": "services\\validator\\app\\main.py",
+      "source_location": "L29"
+    },
+    {
+      "id": "main_health",
+      "label": "health()",
+      "file_type": "code",
+      "source_file": "services\\validator\\app\\main.py",
+      "source_location": "L187"
+    },
+    {
+      "id": "services_validator_app_init_py",
+      "label": "__init__.py",
+      "file_type": "code",
+      "source_file": "services\\validator\\app\\__init__.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "services_voiceover_app_main_py",
+      "label": "main.py",
+      "file_type": "code",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "main_generate_openai_tts",
+      "label": "generate_openai_tts()",
+      "file_type": "code",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L35"
+    },
+    {
+      "id": "main_generate_espeak_fallback",
+      "label": "generate_espeak_fallback()",
+      "file_type": "code",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L59"
+    },
+    {
+      "id": "main_generate_voiceover",
+      "label": "generate_voiceover()",
+      "file_type": "code",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L73"
+    },
+    {
+      "id": "main_health",
+      "label": "health()",
+      "file_type": "code",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L143"
+    },
+    {
+      "id": "main_rationale_36",
+      "label": "Generate TTS using OpenAI. Returns True if successful.",
+      "file_type": "rationale",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L36"
+    },
+    {
+      "id": "main_rationale_60",
+      "label": "Fallback to espeak (last resort).",
+      "file_type": "rationale",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L60"
+    },
+    {
+      "id": "services_voiceover_app_init_py",
+      "label": "__init__.py",
+      "file_type": "code",
+      "source_file": "services\\voiceover\\app\\__init__.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "shared_config_py",
+      "label": "config.py",
+      "file_type": "code",
+      "source_file": "shared\\config.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "config_settings",
+      "label": "Settings",
+      "file_type": "code",
+      "source_file": "shared\\config.py",
+      "source_location": "L4"
+    },
+    {
+      "id": "basesettings",
+      "label": "BaseSettings",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "shared_init_py",
+      "label": "__init__.py",
+      "file_type": "code",
+      "source_file": "shared\\__init__.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "shared_database_init_py",
+      "label": "__init__.py",
+      "file_type": "code",
+      "source_file": "shared\\database\\__init__.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "shared_models_agent_state_py",
+      "label": "agent_state.py",
+      "file_type": "code",
+      "source_file": "shared\\models\\agent_state.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "agent_state_langgraphstate",
+      "label": "LangGraphState",
+      "file_type": "code",
+      "source_file": "shared\\models\\agent_state.py",
+      "source_location": "L4"
+    },
+    {
+      "id": "typeddict",
+      "label": "TypedDict",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "shared_models_init_py",
+      "label": "__init__.py",
+      "file_type": "code",
+      "source_file": "shared\\models\\__init__.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "shared_schemas_common_py",
+      "label": "common.py",
+      "file_type": "code",
+      "source_file": "shared\\schemas\\common.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "common_sceneplan",
+      "label": "ScenePlan",
+      "file_type": "code",
+      "source_file": "shared\\schemas\\common.py",
+      "source_location": "L4"
+    },
+    {
+      "id": "basemodel",
+      "label": "BaseModel",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "common_scriptresponse",
+      "label": "ScriptResponse",
+      "file_type": "code",
+      "source_file": "shared\\schemas\\common.py",
+      "source_location": "L10"
+    },
+    {
+      "id": "common_jobstate",
+      "label": "JobState",
+      "file_type": "code",
+      "source_file": "shared\\schemas\\common.py",
+      "source_location": "L14"
+    },
+    {
+      "id": "common_generationrequest",
+      "label": "GenerationRequest",
+      "file_type": "code",
+      "source_file": "shared\\schemas\\common.py",
+      "source_location": "L38"
+    },
+    {
+      "id": "shared_schemas_requests_py",
+      "label": "requests.py",
+      "file_type": "code",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "requests_scriptwriterrequest",
+      "label": "ScriptWriterRequest",
+      "file_type": "code",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L5"
+    },
+    {
+      "id": "basemodel",
+      "label": "BaseModel",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "requests_codegeneratorrequest",
+      "label": "CodeGeneratorRequest",
+      "file_type": "code",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L8"
+    },
+    {
+      "id": "requests_validatorrequest",
+      "label": "ValidatorRequest",
+      "file_type": "code",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L14"
+    },
+    {
+      "id": "requests_voiceoverrequest",
+      "label": "VoiceoverRequest",
+      "file_type": "code",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L19"
+    },
+    {
+      "id": "requests_assemblerrequest",
+      "label": "AssemblerRequest",
+      "file_type": "code",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L24"
+    },
+    {
+      "id": "shared_schemas_responses_py",
+      "label": "responses.py",
+      "file_type": "code",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "responses_scriptwriterresponse",
+      "label": "ScriptWriterResponse",
+      "file_type": "code",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L5"
+    },
+    {
+      "id": "basemodel",
+      "label": "BaseModel",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "responses_codegeneratorresponse",
+      "label": "CodeGeneratorResponse",
+      "file_type": "code",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L8"
+    },
+    {
+      "id": "responses_validatorresponse",
+      "label": "ValidatorResponse",
+      "file_type": "code",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L12"
+    },
+    {
+      "id": "responses_voiceoverresponse",
+      "label": "VoiceoverResponse",
+      "file_type": "code",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L18"
+    },
+    {
+      "id": "responses_assemblerresponse",
+      "label": "AssemblerResponse",
+      "file_type": "code",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L22"
+    },
+    {
+      "id": "shared_schemas_init_py",
+      "label": "__init__.py",
+      "file_type": "code",
+      "source_file": "shared\\schemas\\__init__.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "workspace_temp_42d666d9_8331_4a79_9dcd_cde1756be3c8_scene_1_py",
+      "label": "scene_1.py",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\42d666d9-8331-4a79-9dcd-cde1756be3c8\\scene_1.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "scene_1_scene1",
+      "label": "Scene1",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\42d666d9-8331-4a79-9dcd-cde1756be3c8\\scene_1.py",
+      "source_location": "L3"
+    },
+    {
+      "id": "scene",
+      "label": "Scene",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "scene_1_scene1_construct",
+      "label": ".construct()",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\42d666d9-8331-4a79-9dcd-cde1756be3c8\\scene_1.py",
+      "source_location": "L4"
+    },
+    {
+      "id": "workspace_temp_42d666d9_8331_4a79_9dcd_cde1756be3c8_scene_2_py",
+      "label": "scene_2.py",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\42d666d9-8331-4a79-9dcd-cde1756be3c8\\scene_2.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "scene_2_scene2",
+      "label": "Scene2",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\42d666d9-8331-4a79-9dcd-cde1756be3c8\\scene_2.py",
+      "source_location": "L3"
+    },
+    {
+      "id": "scene",
+      "label": "Scene",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "scene_2_scene2_construct",
+      "label": ".construct()",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\42d666d9-8331-4a79-9dcd-cde1756be3c8\\scene_2.py",
+      "source_location": "L4"
+    },
+    {
+      "id": "workspace_temp_63e1137b_b42e_4b1c_b6cc_f0f1c3185a2f_scene_1_py",
+      "label": "scene_1.py",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\63e1137b-b42e-4b1c-b6cc-f0f1c3185a2f\\scene_1.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "scene_1_scene1",
+      "label": "Scene1",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\63e1137b-b42e-4b1c-b6cc-f0f1c3185a2f\\scene_1.py",
+      "source_location": "L3"
+    },
+    {
+      "id": "scene",
+      "label": "Scene",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "scene_1_scene1_construct",
+      "label": ".construct()",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\63e1137b-b42e-4b1c-b6cc-f0f1c3185a2f\\scene_1.py",
+      "source_location": "L4"
+    },
+    {
+      "id": "workspace_temp_75b45d6c_7b0c_45d3_ac8f_42cda3e0fe55_scene_1_py",
+      "label": "scene_1.py",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_1.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "scene_1_scene1",
+      "label": "Scene1",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_1.py",
+      "source_location": "L3"
+    },
+    {
+      "id": "scene",
+      "label": "Scene",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "scene_1_scene1_construct",
+      "label": ".construct()",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_1.py",
+      "source_location": "L4"
+    },
+    {
+      "id": "workspace_temp_75b45d6c_7b0c_45d3_ac8f_42cda3e0fe55_scene_2_py",
+      "label": "scene_2.py",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_2.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "scene_2_scene2",
+      "label": "Scene2",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_2.py",
+      "source_location": "L3"
+    },
+    {
+      "id": "scene",
+      "label": "Scene",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "scene_2_scene2_construct",
+      "label": ".construct()",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_2.py",
+      "source_location": "L4"
+    },
+    {
+      "id": "workspace_temp_75b45d6c_7b0c_45d3_ac8f_42cda3e0fe55_scene_3_py",
+      "label": "scene_3.py",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_3.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "scene_3_scene3",
+      "label": "Scene3",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_3.py",
+      "source_location": "L3"
+    },
+    {
+      "id": "scene",
+      "label": "Scene",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "scene_3_scene3_construct",
+      "label": ".construct()",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_3.py",
+      "source_location": "L4"
+    },
+    {
+      "id": "workspace_temp_75b45d6c_7b0c_45d3_ac8f_42cda3e0fe55_scene_4_py",
+      "label": "scene_4.py",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_4.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "scene_4_scene4",
+      "label": "Scene4",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_4.py",
+      "source_location": "L3"
+    },
+    {
+      "id": "scene",
+      "label": "Scene",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "scene_4_scene4_construct",
+      "label": ".construct()",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_4.py",
+      "source_location": "L4"
+    },
+    {
+      "id": "workspace_temp_b4795542_e91f_4e2f_bdd2_b5bacef3f2ac_scene_1_py",
+      "label": "scene_1.py",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_1.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "scene_1_scene1",
+      "label": "Scene1",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_1.py",
+      "source_location": "L3"
+    },
+    {
+      "id": "scene",
+      "label": "Scene",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "scene_1_scene1_construct",
+      "label": ".construct()",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_1.py",
+      "source_location": "L4"
+    },
+    {
+      "id": "workspace_temp_b4795542_e91f_4e2f_bdd2_b5bacef3f2ac_scene_2_py",
+      "label": "scene_2.py",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_2.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "scene_2_scene2",
+      "label": "Scene2",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_2.py",
+      "source_location": "L3"
+    },
+    {
+      "id": "scene",
+      "label": "Scene",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "scene_2_scene2_construct",
+      "label": ".construct()",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_2.py",
+      "source_location": "L4"
+    },
+    {
+      "id": "workspace_temp_b4795542_e91f_4e2f_bdd2_b5bacef3f2ac_scene_3_py",
+      "label": "scene_3.py",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_3.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "scene_3_scene3",
+      "label": "Scene3",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_3.py",
+      "source_location": "L4"
+    },
+    {
+      "id": "scene",
+      "label": "Scene",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "scene_3_scene3_construct",
+      "label": ".construct()",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_3.py",
+      "source_location": "L5"
+    },
+    {
+      "id": "workspace_temp_b4795542_e91f_4e2f_bdd2_b5bacef3f2ac_scene_4_py",
+      "label": "scene_4.py",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_4.py",
+      "source_location": "L1"
+    },
+    {
+      "id": "scene_4_scene4",
+      "label": "Scene4",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_4.py",
+      "source_location": "L3"
+    },
+    {
+      "id": "scene",
+      "label": "Scene",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": ""
+    },
+    {
+      "id": "scene_4_scene4_construct",
+      "label": ".construct()",
+      "file_type": "code",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_4.py",
+      "source_location": "L4"
+    }
+  ],
+  "edges": [
+    {
+      "source": "services_assembler_app_main_py",
+      "target": "fastapi",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\assembler\\app\\main.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "services_assembler_app_main_py",
+      "target": "shared_schemas_requests",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\assembler\\app\\main.py",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "services_assembler_app_main_py",
+      "target": "shared_schemas_responses",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\assembler\\app\\main.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "services_assembler_app_main_py",
+      "target": "shared_config",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\assembler\\app\\main.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "services_assembler_app_main_py",
+      "target": "subprocess",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\assembler\\app\\main.py",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "services_assembler_app_main_py",
+      "target": "os",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\assembler\\app\\main.py",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "services_assembler_app_main_py",
+      "target": "logging",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\assembler\\app\\main.py",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "services_assembler_app_main_py",
+      "target": "main_assemble_video",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\assembler\\app\\main.py",
+      "source_location": "L14",
+      "weight": 1.0
+    },
+    {
+      "source": "services_assembler_app_main_py",
+      "target": "main_health",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\assembler\\app\\main.py",
+      "source_location": "L89",
+      "weight": 1.0
+    },
+    {
+      "source": "services_code_generator_app_main_py",
+      "target": "fastapi",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "services_code_generator_app_main_py",
+      "target": "shared_schemas_requests",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "services_code_generator_app_main_py",
+      "target": "shared_schemas_responses",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "services_code_generator_app_main_py",
+      "target": "shared_config",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "services_code_generator_app_main_py",
+      "target": "openai",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "services_code_generator_app_main_py",
+      "target": "os",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "services_code_generator_app_main_py",
+      "target": "json",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L9",
+      "weight": 1.0
+    },
+    {
+      "source": "services_code_generator_app_main_py",
+      "target": "logging",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L10",
+      "weight": 1.0
+    },
+    {
+      "source": "services_code_generator_app_main_py",
+      "target": "uuid",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L11",
+      "weight": 1.0
+    },
+    {
+      "source": "services_code_generator_app_main_py",
+      "target": "time",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L12",
+      "weight": 1.0
+    },
+    {
+      "source": "services_code_generator_app_main_py",
+      "target": "pydantic",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L13",
+      "weight": 1.0
+    },
+    {
+      "source": "services_code_generator_app_main_py",
+      "target": "langsmith",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L24",
+      "weight": 1.0
+    },
+    {
+      "source": "services_code_generator_app_main_py",
+      "target": "main_codegenoutput",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L37",
+      "weight": 1.0
+    },
+    {
+      "source": "main_codegenoutput",
+      "target": "basemodel",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L37",
+      "weight": 1.0
+    },
+    {
+      "source": "services_code_generator_app_main_py",
+      "target": "main_generate_code",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L41",
+      "weight": 1.0
+    },
+    {
+      "source": "services_code_generator_app_main_py",
+      "target": "main_health",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L174",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_main_py",
+      "target": "fastapi",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\main.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_main_py",
+      "target": "shared_schemas_common",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\main.py",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_main_py",
+      "target": "shared_models_agent_state",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\main.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_main_py",
+      "target": "app_core_graph",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\main.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_main_py",
+      "target": "uuid",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\main.py",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_main_py",
+      "target": "logging",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\main.py",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_main_py",
+      "target": "os",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\main.py",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_main_py",
+      "target": "time",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\main.py",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_main_py",
+      "target": "langsmith",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\main.py",
+      "source_location": "L19",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_main_py",
+      "target": "main_run_pipeline",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\main.py",
+      "source_location": "L29",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_main_py",
+      "target": "main_start_generation",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\main.py",
+      "source_location": "L109",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_main_py",
+      "target": "main_get_job_status",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\main.py",
+      "source_location": "L125",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_main_py",
+      "target": "main_health",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\main.py",
+      "source_location": "L131",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_core_graph_py",
+      "target": "langgraph_graph",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_core_graph_py",
+      "target": "shared_models_agent_state",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_core_graph_py",
+      "target": "shared_config",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_core_graph_py",
+      "target": "shared_schemas_requests",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_core_graph_py",
+      "target": "shared_schemas_common",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_core_graph_py",
+      "target": "httpx",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L9",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_core_graph_py",
+      "target": "logging",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L10",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_core_graph_py",
+      "target": "typing",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L11",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_core_graph_py",
+      "target": "graph_post",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L15",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_core_graph_py",
+      "target": "graph_script_writer_node",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L21",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_core_graph_py",
+      "target": "graph_code_generator_node",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L30",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_core_graph_py",
+      "target": "graph_validator_node",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L70",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_core_graph_py",
+      "target": "graph_validation_router",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L112",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_core_graph_py",
+      "target": "graph_voiceover_node",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L139",
+      "weight": 1.0
+    },
+    {
+      "source": "services_orchestrator_app_core_graph_py",
+      "target": "graph_assembler_node",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L162",
+      "weight": 1.0
+    },
+    {
+      "source": "graph_script_writer_node",
+      "target": "graph_post",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L24",
+      "weight": 1.0
+    },
+    {
+      "source": "graph_code_generator_node",
+      "target": "graph_post",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L53",
+      "weight": 1.0
+    },
+    {
+      "source": "graph_validator_node",
+      "target": "graph_post",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L91",
+      "weight": 1.0
+    },
+    {
+      "source": "graph_voiceover_node",
+      "target": "graph_post",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L154",
+      "weight": 1.0
+    },
+    {
+      "source": "graph_assembler_node",
+      "target": "graph_post",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\orchestrator\\app\\core\\graph.py",
+      "source_location": "L170",
+      "weight": 1.0
+    },
+    {
+      "source": "services_script_writer_app_main_py",
+      "target": "fastapi",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\script-writer\\app\\main.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "services_script_writer_app_main_py",
+      "target": "shared_schemas_requests",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\script-writer\\app\\main.py",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "services_script_writer_app_main_py",
+      "target": "shared_schemas_responses",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\script-writer\\app\\main.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "services_script_writer_app_main_py",
+      "target": "shared_schemas_common",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\script-writer\\app\\main.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "services_script_writer_app_main_py",
+      "target": "shared_config",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\script-writer\\app\\main.py",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "services_script_writer_app_main_py",
+      "target": "openai",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\script-writer\\app\\main.py",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "services_script_writer_app_main_py",
+      "target": "json",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\script-writer\\app\\main.py",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "services_script_writer_app_main_py",
+      "target": "logging",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\script-writer\\app\\main.py",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "services_script_writer_app_main_py",
+      "target": "uuid",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\script-writer\\app\\main.py",
+      "source_location": "L9",
+      "weight": 1.0
+    },
+    {
+      "source": "services_script_writer_app_main_py",
+      "target": "time",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\script-writer\\app\\main.py",
+      "source_location": "L10",
+      "weight": 1.0
+    },
+    {
+      "source": "services_script_writer_app_main_py",
+      "target": "os",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\script-writer\\app\\main.py",
+      "source_location": "L11",
+      "weight": 1.0
+    },
+    {
+      "source": "services_script_writer_app_main_py",
+      "target": "pathlib",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\script-writer\\app\\main.py",
+      "source_location": "L12",
+      "weight": 1.0
+    },
+    {
+      "source": "services_script_writer_app_main_py",
+      "target": "langsmith",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\script-writer\\app\\main.py",
+      "source_location": "L23",
+      "weight": 1.0
+    },
+    {
+      "source": "services_script_writer_app_main_py",
+      "target": "main_generate_script",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\script-writer\\app\\main.py",
+      "source_location": "L37",
+      "weight": 1.0
+    },
+    {
+      "source": "services_script_writer_app_main_py",
+      "target": "main_health",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\script-writer\\app\\main.py",
+      "source_location": "L137",
+      "weight": 1.0
+    },
+    {
+      "source": "services_validator_app_main_py",
+      "target": "fastapi",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\validator\\app\\main.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "services_validator_app_main_py",
+      "target": "shared_schemas_requests",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\validator\\app\\main.py",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "services_validator_app_main_py",
+      "target": "shared_schemas_responses",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\validator\\app\\main.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "services_validator_app_main_py",
+      "target": "shared_config",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\validator\\app\\main.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "services_validator_app_main_py",
+      "target": "subprocess",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\validator\\app\\main.py",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "services_validator_app_main_py",
+      "target": "os",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\validator\\app\\main.py",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "services_validator_app_main_py",
+      "target": "logging",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\validator\\app\\main.py",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "services_validator_app_main_py",
+      "target": "glob",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\validator\\app\\main.py",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "services_validator_app_main_py",
+      "target": "uuid",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\validator\\app\\main.py",
+      "source_location": "L9",
+      "weight": 1.0
+    },
+    {
+      "source": "services_validator_app_main_py",
+      "target": "time",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\validator\\app\\main.py",
+      "source_location": "L10",
+      "weight": 1.0
+    },
+    {
+      "source": "services_validator_app_main_py",
+      "target": "langsmith",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\validator\\app\\main.py",
+      "source_location": "L21",
+      "weight": 1.0
+    },
+    {
+      "source": "services_validator_app_main_py",
+      "target": "main_validate_code",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\validator\\app\\main.py",
+      "source_location": "L29",
+      "weight": 1.0
+    },
+    {
+      "source": "services_validator_app_main_py",
+      "target": "main_health",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\validator\\app\\main.py",
+      "source_location": "L187",
+      "weight": 1.0
+    },
+    {
+      "source": "services_voiceover_app_main_py",
+      "target": "fastapi",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "services_voiceover_app_main_py",
+      "target": "shared_schemas_requests",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "services_voiceover_app_main_py",
+      "target": "shared_schemas_responses",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "services_voiceover_app_main_py",
+      "target": "shared_config",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "services_voiceover_app_main_py",
+      "target": "openai",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "services_voiceover_app_main_py",
+      "target": "os",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L6",
+      "weight": 1.0
+    },
+    {
+      "source": "services_voiceover_app_main_py",
+      "target": "wave",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L7",
+      "weight": 1.0
+    },
+    {
+      "source": "services_voiceover_app_main_py",
+      "target": "logging",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "services_voiceover_app_main_py",
+      "target": "subprocess",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L9",
+      "weight": 1.0
+    },
+    {
+      "source": "services_voiceover_app_main_py",
+      "target": "uuid",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L10",
+      "weight": 1.0
+    },
+    {
+      "source": "services_voiceover_app_main_py",
+      "target": "time",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L11",
+      "weight": 1.0
+    },
+    {
+      "source": "services_voiceover_app_main_py",
+      "target": "langsmith",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L22",
+      "weight": 1.0
+    },
+    {
+      "source": "services_voiceover_app_main_py",
+      "target": "main_generate_openai_tts",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L35",
+      "weight": 1.0
+    },
+    {
+      "source": "services_voiceover_app_main_py",
+      "target": "main_generate_espeak_fallback",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L59",
+      "weight": 1.0
+    },
+    {
+      "source": "services_voiceover_app_main_py",
+      "target": "main_generate_voiceover",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L73",
+      "weight": 1.0
+    },
+    {
+      "source": "services_voiceover_app_main_py",
+      "target": "main_health",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L143",
+      "weight": 1.0
+    },
+    {
+      "source": "main_generate_voiceover",
+      "target": "main_generate_openai_tts",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L102",
+      "weight": 1.0
+    },
+    {
+      "source": "main_generate_voiceover",
+      "target": "main_generate_espeak_fallback",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L120",
+      "weight": 1.0
+    },
+    {
+      "source": "main_rationale_36",
+      "target": "main_generate_openai_tts",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L36",
+      "weight": 1.0
+    },
+    {
+      "source": "main_rationale_60",
+      "target": "main_generate_espeak_fallback",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L60",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_config_py",
+      "target": "pydantic_settings",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\config.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_config_py",
+      "target": "os",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\config.py",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_config_py",
+      "target": "config_settings",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\config.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "config_settings",
+      "target": "basesettings",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\config.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_models_agent_state_py",
+      "target": "typing",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\models\\agent_state.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_models_agent_state_py",
+      "target": "shared_schemas_common",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\models\\agent_state.py",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_models_agent_state_py",
+      "target": "agent_state_langgraphstate",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\models\\agent_state.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "agent_state_langgraphstate",
+      "target": "typeddict",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\models\\agent_state.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_common_py",
+      "target": "pydantic",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\common.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_common_py",
+      "target": "typing",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\common.py",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_common_py",
+      "target": "common_sceneplan",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\common.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "common_sceneplan",
+      "target": "basemodel",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\common.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_common_py",
+      "target": "common_scriptresponse",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\common.py",
+      "source_location": "L10",
+      "weight": 1.0
+    },
+    {
+      "source": "common_scriptresponse",
+      "target": "basemodel",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\common.py",
+      "source_location": "L10",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_common_py",
+      "target": "common_jobstate",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\common.py",
+      "source_location": "L14",
+      "weight": 1.0
+    },
+    {
+      "source": "common_jobstate",
+      "target": "basemodel",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\common.py",
+      "source_location": "L14",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_common_py",
+      "target": "common_generationrequest",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\common.py",
+      "source_location": "L38",
+      "weight": 1.0
+    },
+    {
+      "source": "common_generationrequest",
+      "target": "basemodel",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\common.py",
+      "source_location": "L38",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_requests_py",
+      "target": "pydantic",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_requests_py",
+      "target": "typing",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_requests_py",
+      "target": "shared_schemas_common",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_requests_py",
+      "target": "requests_scriptwriterrequest",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "requests_scriptwriterrequest",
+      "target": "basemodel",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_requests_py",
+      "target": "requests_codegeneratorrequest",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "requests_codegeneratorrequest",
+      "target": "basemodel",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_requests_py",
+      "target": "requests_validatorrequest",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L14",
+      "weight": 1.0
+    },
+    {
+      "source": "requests_validatorrequest",
+      "target": "basemodel",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L14",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_requests_py",
+      "target": "requests_voiceoverrequest",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L19",
+      "weight": 1.0
+    },
+    {
+      "source": "requests_voiceoverrequest",
+      "target": "basemodel",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L19",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_requests_py",
+      "target": "requests_assemblerrequest",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L24",
+      "weight": 1.0
+    },
+    {
+      "source": "requests_assemblerrequest",
+      "target": "basemodel",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L24",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_responses_py",
+      "target": "pydantic",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_responses_py",
+      "target": "typing",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_responses_py",
+      "target": "shared_schemas_common",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_responses_py",
+      "target": "responses_scriptwriterresponse",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "responses_scriptwriterresponse",
+      "target": "basemodel",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_responses_py",
+      "target": "responses_codegeneratorresponse",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "responses_codegeneratorresponse",
+      "target": "basemodel",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L8",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_responses_py",
+      "target": "responses_validatorresponse",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L12",
+      "weight": 1.0
+    },
+    {
+      "source": "responses_validatorresponse",
+      "target": "basemodel",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L12",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_responses_py",
+      "target": "responses_voiceoverresponse",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L18",
+      "weight": 1.0
+    },
+    {
+      "source": "responses_voiceoverresponse",
+      "target": "basemodel",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L18",
+      "weight": 1.0
+    },
+    {
+      "source": "shared_schemas_responses_py",
+      "target": "responses_assemblerresponse",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L22",
+      "weight": 1.0
+    },
+    {
+      "source": "responses_assemblerresponse",
+      "target": "basemodel",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L22",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_42d666d9_8331_4a79_9dcd_cde1756be3c8_scene_1_py",
+      "target": "manim",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\42d666d9-8331-4a79-9dcd-cde1756be3c8\\scene_1.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_42d666d9_8331_4a79_9dcd_cde1756be3c8_scene_1_py",
+      "target": "scene_1_scene1",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\42d666d9-8331-4a79-9dcd-cde1756be3c8\\scene_1.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_1_scene1",
+      "target": "scene",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\42d666d9-8331-4a79-9dcd-cde1756be3c8\\scene_1.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_1_scene1",
+      "target": "scene_1_scene1_construct",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\42d666d9-8331-4a79-9dcd-cde1756be3c8\\scene_1.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_42d666d9_8331_4a79_9dcd_cde1756be3c8_scene_2_py",
+      "target": "manim",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\42d666d9-8331-4a79-9dcd-cde1756be3c8\\scene_2.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_42d666d9_8331_4a79_9dcd_cde1756be3c8_scene_2_py",
+      "target": "scene_2_scene2",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\42d666d9-8331-4a79-9dcd-cde1756be3c8\\scene_2.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_2_scene2",
+      "target": "scene",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\42d666d9-8331-4a79-9dcd-cde1756be3c8\\scene_2.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_2_scene2",
+      "target": "scene_2_scene2_construct",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\42d666d9-8331-4a79-9dcd-cde1756be3c8\\scene_2.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_63e1137b_b42e_4b1c_b6cc_f0f1c3185a2f_scene_1_py",
+      "target": "manim",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\63e1137b-b42e-4b1c-b6cc-f0f1c3185a2f\\scene_1.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_63e1137b_b42e_4b1c_b6cc_f0f1c3185a2f_scene_1_py",
+      "target": "scene_1_scene1",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\63e1137b-b42e-4b1c-b6cc-f0f1c3185a2f\\scene_1.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_1_scene1",
+      "target": "scene",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\63e1137b-b42e-4b1c-b6cc-f0f1c3185a2f\\scene_1.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_1_scene1",
+      "target": "scene_1_scene1_construct",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\63e1137b-b42e-4b1c-b6cc-f0f1c3185a2f\\scene_1.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_75b45d6c_7b0c_45d3_ac8f_42cda3e0fe55_scene_1_py",
+      "target": "manim",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_1.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_75b45d6c_7b0c_45d3_ac8f_42cda3e0fe55_scene_1_py",
+      "target": "scene_1_scene1",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_1.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_1_scene1",
+      "target": "scene",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_1.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_1_scene1",
+      "target": "scene_1_scene1_construct",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_1.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_75b45d6c_7b0c_45d3_ac8f_42cda3e0fe55_scene_2_py",
+      "target": "manim",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_2.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_75b45d6c_7b0c_45d3_ac8f_42cda3e0fe55_scene_2_py",
+      "target": "scene_2_scene2",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_2.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_2_scene2",
+      "target": "scene",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_2.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_2_scene2",
+      "target": "scene_2_scene2_construct",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_2.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_75b45d6c_7b0c_45d3_ac8f_42cda3e0fe55_scene_3_py",
+      "target": "manim",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_3.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_75b45d6c_7b0c_45d3_ac8f_42cda3e0fe55_scene_3_py",
+      "target": "scene_3_scene3",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_3.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_3_scene3",
+      "target": "scene",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_3.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_3_scene3",
+      "target": "scene_3_scene3_construct",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_3.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_75b45d6c_7b0c_45d3_ac8f_42cda3e0fe55_scene_4_py",
+      "target": "manim",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_4.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_75b45d6c_7b0c_45d3_ac8f_42cda3e0fe55_scene_4_py",
+      "target": "scene_4_scene4",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_4.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_4_scene4",
+      "target": "scene",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_4.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_4_scene4",
+      "target": "scene_4_scene4_construct",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\75b45d6c-7b0c-45d3-ac8f-42cda3e0fe55\\scene_4.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_b4795542_e91f_4e2f_bdd2_b5bacef3f2ac_scene_1_py",
+      "target": "manim",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_1.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_b4795542_e91f_4e2f_bdd2_b5bacef3f2ac_scene_1_py",
+      "target": "scene_1_scene1",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_1.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_1_scene1",
+      "target": "scene",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_1.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_1_scene1",
+      "target": "scene_1_scene1_construct",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_1.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_b4795542_e91f_4e2f_bdd2_b5bacef3f2ac_scene_2_py",
+      "target": "manim",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_2.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_b4795542_e91f_4e2f_bdd2_b5bacef3f2ac_scene_2_py",
+      "target": "scene_2_scene2",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_2.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_2_scene2",
+      "target": "scene",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_2.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_2_scene2",
+      "target": "scene_2_scene2_construct",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_2.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_b4795542_e91f_4e2f_bdd2_b5bacef3f2ac_scene_3_py",
+      "target": "manim",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_3.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_b4795542_e91f_4e2f_bdd2_b5bacef3f2ac_scene_3_py",
+      "target": "numpy",
+      "relation": "imports",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_3.py",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_b4795542_e91f_4e2f_bdd2_b5bacef3f2ac_scene_3_py",
+      "target": "scene_3_scene3",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_3.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_3_scene3",
+      "target": "scene",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_3.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_3_scene3",
+      "target": "scene_3_scene3_construct",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_3.py",
+      "source_location": "L5",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_b4795542_e91f_4e2f_bdd2_b5bacef3f2ac_scene_4_py",
+      "target": "manim",
+      "relation": "imports_from",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_4.py",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "workspace_temp_b4795542_e91f_4e2f_bdd2_b5bacef3f2ac_scene_4_py",
+      "target": "scene_4_scene4",
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_4.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_4_scene4",
+      "target": "scene",
+      "relation": "inherits",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_4.py",
+      "source_location": "L3",
+      "weight": 1.0
+    },
+    {
+      "source": "scene_4_scene4",
+      "target": "scene_4_scene4_construct",
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "workspace\\temp\\b4795542-e91f-4e2f-bdd2-b5bacef3f2ac\\scene_4.py",
+      "source_location": "L4",
+      "weight": 1.0
+    },
+    {
+      "source": "main_codegenoutput",
+      "target": "requests_codegeneratorrequest",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L2",
+      "weight": 0.8
+    },
+    {
+      "source": "main_codegenoutput",
+      "target": "responses_codegeneratorresponse",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "services\\code-generator\\app\\main.py",
+      "source_location": "L3",
+      "weight": 0.8
+    },
+    {
+      "source": "main_rationale_36",
+      "target": "requests_voiceoverrequest",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L2",
+      "weight": 0.8
+    },
+    {
+      "source": "main_rationale_60",
+      "target": "requests_voiceoverrequest",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L2",
+      "weight": 0.8
+    },
+    {
+      "source": "main_rationale_36",
+      "target": "responses_voiceoverresponse",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L3",
+      "weight": 0.8
+    },
+    {
+      "source": "main_rationale_60",
+      "target": "responses_voiceoverresponse",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "services\\voiceover\\app\\main.py",
+      "source_location": "L3",
+      "weight": 0.8
+    },
+    {
+      "source": "agent_state_langgraphstate",
+      "target": "common_scriptresponse",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "shared\\models\\agent_state.py",
+      "source_location": "L2",
+      "weight": 0.8
+    },
+    {
+      "source": "requests_scriptwriterrequest",
+      "target": "common_sceneplan",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L3",
+      "weight": 0.8
+    },
+    {
+      "source": "requests_codegeneratorrequest",
+      "target": "common_sceneplan",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L3",
+      "weight": 0.8
+    },
+    {
+      "source": "requests_validatorrequest",
+      "target": "common_sceneplan",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L3",
+      "weight": 0.8
+    },
+    {
+      "source": "requests_voiceoverrequest",
+      "target": "common_sceneplan",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L3",
+      "weight": 0.8
+    },
+    {
+      "source": "requests_assemblerrequest",
+      "target": "common_sceneplan",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L3",
+      "weight": 0.8
+    },
+    {
+      "source": "requests_scriptwriterrequest",
+      "target": "common_jobstate",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L3",
+      "weight": 0.8
+    },
+    {
+      "source": "requests_codegeneratorrequest",
+      "target": "common_jobstate",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L3",
+      "weight": 0.8
+    },
+    {
+      "source": "requests_validatorrequest",
+      "target": "common_jobstate",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L3",
+      "weight": 0.8
+    },
+    {
+      "source": "requests_voiceoverrequest",
+      "target": "common_jobstate",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L3",
+      "weight": 0.8
+    },
+    {
+      "source": "requests_assemblerrequest",
+      "target": "common_jobstate",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "shared\\schemas\\requests.py",
+      "source_location": "L3",
+      "weight": 0.8
+    },
+    {
+      "source": "responses_scriptwriterresponse",
+      "target": "common_scriptresponse",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L3",
+      "weight": 0.8
+    },
+    {
+      "source": "responses_codegeneratorresponse",
+      "target": "common_scriptresponse",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L3",
+      "weight": 0.8
+    },
+    {
+      "source": "responses_validatorresponse",
+      "target": "common_scriptresponse",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L3",
+      "weight": 0.8
+    },
+    {
+      "source": "responses_voiceoverresponse",
+      "target": "common_scriptresponse",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L3",
+      "weight": 0.8
+    },
+    {
+      "source": "responses_assemblerresponse",
+      "target": "common_scriptresponse",
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "shared\\schemas\\responses.py",
+      "source_location": "L3",
+      "weight": 0.8
+    }
+  ],
+  "hyperedges": [],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

@@ -1,0 +1,10 @@
+Now let's visually prove this remarkable relationship. Imagine we have two squares, one
+windside, and another windside B we can arrange into form a larger square windside length,
+plus B inside this larger square, we can fit a square on side C, a long windfall identical
+right angled triangles, each having legs, and be noticed how the area of the large square
+can be expressed in two ways. First, as the sum of a square, B squared, and two rectangles
+over times B and second, as the area of the C squared square, plus the area of four
+on our right angled triangles. I subtracting the area of the four triangles from both
+expressions, we are left with the elegant conclusion, a squared plus B squared equals C squared.
+This demonstrates that the sum of the areas on the squares on the left perfectly fills the area
+on the square, on the high part of the news.

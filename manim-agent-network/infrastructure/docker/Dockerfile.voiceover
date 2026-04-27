@@ -1,5 +1,31 @@
 FROM base-manim-agent
 
+# Install git so we can clone Dia2 from GitHub
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+
+# Dia2 requires torch>=2.8.0 from the PyTorch CUDA 12.8 index
+# Increase timeout and use retries for reliability
+RUN UV_HTTP_TIMEOUT=600 uv pip install --system --no-cache \
+    --index-url https://download.pytorch.org/whl/cu128 \
+    "torch>=2.8.0" || \
+    UV_HTTP_TIMEOUT=600 uv pip install --system --no-cache \
+    --index-url https://download.pytorch.org/whl/cu124 \
+    "torch>=2.6.0"
+
+# Install Dia2 and its remaining dependencies from GitHub
+RUN uv pip install --system --no-cache \
+    "numpy>=2.1.0,<3.0" \
+    "transformers>=4.55.3" \
+    "safetensors==0.5.3" \
+    "huggingface-hub>=0.24.7" \
+    "sphn>=0.2.0" \
+    "soundfile>=0.12.1" \
+    "whisper-timestamped>=1.14.2"
+
+RUN uv pip install --system --no-cache \
+    --no-build-isolation \
+    "git+https://github.com/nari-labs/dia2.git"
+
 COPY shared/ /app/shared/
 COPY services/voiceover/ /app/
 

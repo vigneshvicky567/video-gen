@@ -9,6 +9,12 @@ RUN apt-get update && apt-get install -y \
     libpango1.0-dev \
     espeak \
     alsa-utils \
+    texlive-latex-base \
+    texlive-latex-extra \
+    texlive-pictures \
+    texlive-science \
+    cm-super \
+    dvipng \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast package management

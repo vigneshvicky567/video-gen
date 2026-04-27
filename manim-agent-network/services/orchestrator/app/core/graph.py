@@ -3,7 +3,8 @@ from shared.models.agent_state import LangGraphState
 from shared.config import settings
 from shared.schemas.requests import (
     ScriptWriterRequest, CodeGeneratorRequest,
-    ValidatorRequest, VoiceoverRequest, AssemblerRequest
+    ValidatorRequest, VoiceoverRequest, AssemblerRequest,
+    ImageFetcherRequest
 )
 from shared.schemas.common import ScenePlan
 import httpx
@@ -24,8 +25,9 @@ async def script_writer_node(state: LangGraphState):
         data = await _post(f"{settings.SCRIPT_WRITER_URL}/generate", {"topic": state["topic"]})
         return {"script": data["script"], "status": "script_generation"}
     except Exception as e:
-        logger.error(f"Script Writer failed: {e}")
-        return {"status": "failed", "overall_error": str(e)}
+        error_msg = str(e) or f"{type(e).__name__}: (no message)"
+        logger.error(f"Script Writer failed: {error_msg}")
+        return {"status": "failed", "overall_error": error_msg}
 
 async def code_generator_node(state: LangGraphState):
     logger.info("Executing Code Generator Node")
@@ -65,7 +67,7 @@ async def code_generator_node(state: LangGraphState):
         return {"code_paths": new_code_paths, "status": "code_generation"}
     except Exception as e:
         logger.error(f"Code Generator failed: {e}")
-        return {"status": "failed", "overall_error": str(e)}
+        return {"status": "failed", "overall_error": str(e) or f"{type(e).__name__}"}
 
 async def validator_node(state: LangGraphState):
     logger.info("Executing Validator Node")
@@ -111,7 +113,7 @@ async def validator_node(state: LangGraphState):
 
 def validation_router(state: LangGraphState) -> Literal["code_generator_node", "voiceover_node", "failed"]:
     # If any overall error, fail
-    if state.get("overall_error"):
+    if state.get("overall_error") is not None:
         return "failed"
 
     script = state.get("script")
@@ -159,13 +161,37 @@ async def voiceover_node(state: LangGraphState):
         logger.error(f"Voiceover failed: {e}")
         return {"status": "failed", "overall_error": str(e)}
 
+async def image_fetcher_node(state: LangGraphState):
+    logger.info("Executing Image Fetcher Node")
+    try:
+        request = ImageFetcherRequest(
+            job_id=state["job_id"],
+            scenes=state["script"]["scenes"]
+        )
+        res = await _post(
+            f"{settings.IMAGE_FETCHER_URL}/fetch",
+            request.model_dump()
+        )
+        # Merge image_paths into state, coercing string keys to int
+        merged_image_paths = {**state.get("image_paths", {})}
+        for k, v in res["image_paths"].items():
+            merged_image_paths[int(k)] = v
+        return {"image_paths": merged_image_paths, "status": "image_fetching"}
+    except Exception as e:
+        logger.error(f"Image Fetcher failed: {e}")
+        return {"status": "failed", "overall_error": str(e)}
+
+
 async def assembler_node(state: LangGraphState):
     logger.info("Executing Assembler Node")
     try:
         req = {
             "job_id": state["job_id"],
             "render_paths": state["render_paths"],
-            "audio_paths": state["audio_paths"]
+            "audio_paths": state["audio_paths"],
+            "scene_plans": state["script"]["scenes"],
+            "image_paths": state.get("image_paths", {}),
+            "script_title": state["script"].get("title", ""),
         }
         res = await _post(f"{settings.ASSEMBLER_URL}/assemble", req)
         return {"final_output_path": res["final_output_path"], "status": "completed"}
@@ -181,6 +207,7 @@ workflow.add_node("script_writer_node", script_writer_node)
 workflow.add_node("code_generator_node", code_generator_node)
 workflow.add_node("validator_node", validator_node)
 workflow.add_node("voiceover_node", voiceover_node)
+workflow.add_node("image_fetcher_node", image_fetcher_node)
 workflow.add_node("assembler_node", assembler_node)
 # Simple dummy node for failure state
 workflow.add_node("failed", lambda s: {"status": "failed"})
@@ -188,14 +215,19 @@ workflow.add_node("failed", lambda s: {"status": "failed"})
 workflow.add_edge(START, "script_writer_node")
 
 # If script writing fails, go to end, else code gen
-workflow.add_conditional_edges("script_writer_node", lambda s: "failed" if s.get("overall_error") else "code_generator_node")
+workflow.add_conditional_edges("script_writer_node", lambda s: "failed" if s.get("overall_error") is not None else "code_generator_node")
 
 workflow.add_edge("code_generator_node", "validator_node")
 
 # Routing after validation: loop back, continue, or fail
 workflow.add_conditional_edges("validator_node", validation_router)
 
-workflow.add_edge("voiceover_node", "assembler_node")
+# voiceover → image_fetcher → assembler (with failure short-circuit)
+workflow.add_edge("voiceover_node", "image_fetcher_node")
+workflow.add_conditional_edges(
+    "image_fetcher_node",
+    lambda s: "failed" if s.get("overall_error") else "assembler_node"
+)
 workflow.add_edge("assembler_node", END)
 workflow.add_edge("failed", END)
 

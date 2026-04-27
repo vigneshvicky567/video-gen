@@ -1,0 +1,20 @@
+{
+  "0": "Scene_1 Construct Scene_2",
+  "1": "Assemble_video Codegenoutput Generate_code",
+  "2": "Basemodel Generationrequest Jobstate",
+  "3": "Langgraphstate Scriptresponse Assemblerresponse",
+  "4": "Assembler_node Code_generator_node Post",
+  "5": "Generate_espeak_fallback Generate_openai_tts Generate_voiceover",
+  "6": "Scene_4 Scene4 Construct",
+  "7": "Basesettings Settings Config",
+  "8": "Init__",
+  "9": "Init__",
+  "10": "Init__",
+  "11": "Init__",
+  "12": "Init__",
+  "13": "Init__",
+  "14": "Init__",
+  "15": "Init__",
+  "16": "Init__",
+  "17": "Init__"
+}

@@ -1,0 +1,28 @@
+# Stage 1: install hyperframes via Node
+FROM node:18-slim AS node_stage
+
+RUN npm install -g --prefix /usr/local hyperframes@latest
+
+# Stage 2: final image based on the shared base
+FROM base-manim-agent
+
+# Copy Node runtime and npx/hyperframes from node stage
+COPY --from=node_stage /usr/local/bin/node /usr/local/bin/node
+COPY --from=node_stage /usr/local/bin/npx  /usr/local/bin/npx
+COPY --from=node_stage /usr/local/lib/node_modules /usr/local/lib/node_modules
+
+# Set NODE_PATH so node can find globally installed modules
+ENV NODE_PATH=/usr/local/lib/node_modules
+
+# Create symlink so `hyperframes` is directly callable as well
+RUN ln -sf /usr/local/lib/node_modules/hyperframes/bin/hyperframes.js /usr/local/bin/hyperframes 2>/dev/null || true
+
+# ffmpeg/ffprobe are already present in base-manim-agent; ensure they are available
+RUN ffprobe -version > /dev/null 2>&1 || (apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*)
+
+COPY shared/ /app/shared/
+COPY services/compositor/ /app/
+
+EXPOSE 8005
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8005"]

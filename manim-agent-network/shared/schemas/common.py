@@ -6,6 +6,7 @@ class ScenePlan(BaseModel):
     narration_text: str
     visual_description: str
     estimated_duration_seconds: int
+    content_type: Optional[str] = None  # "text_ui" or "math_animation"
 
 class ScriptResponse(BaseModel):
     title: str
@@ -34,6 +35,14 @@ class JobState(BaseModel):
 
     final_output_path: Optional[str] = None
     overall_error: Optional[str] = None
+
+class SceneTimingRecord(BaseModel):
+    scene_id: int
+    render_path: str
+    audio_path: str
+    actual_video_duration_seconds: float
+    actual_audio_duration_seconds: float
+    start_time_seconds: float
 
 class GenerationRequest(BaseModel):
     topic: str

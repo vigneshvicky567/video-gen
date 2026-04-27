@@ -1,0 +1,288 @@
+{
+  "communities": {
+    "0": [
+      "scene",
+      "scene_1_scene1",
+      "scene_1_scene1_construct",
+      "scene_2_scene2",
+      "scene_2_scene2_construct",
+      "scene_3_scene3",
+      "scene_3_scene3_construct",
+      "workspace_temp_42d666d9_8331_4a79_9dcd_cde1756be3c8_scene_1_py",
+      "workspace_temp_42d666d9_8331_4a79_9dcd_cde1756be3c8_scene_2_py",
+      "workspace_temp_63e1137b_b42e_4b1c_b6cc_f0f1c3185a2f_scene_1_py",
+      "workspace_temp_75b45d6c_7b0c_45d3_ac8f_42cda3e0fe55_scene_1_py",
+      "workspace_temp_75b45d6c_7b0c_45d3_ac8f_42cda3e0fe55_scene_2_py",
+      "workspace_temp_75b45d6c_7b0c_45d3_ac8f_42cda3e0fe55_scene_3_py",
+      "workspace_temp_b4795542_e91f_4e2f_bdd2_b5bacef3f2ac_scene_1_py",
+      "workspace_temp_b4795542_e91f_4e2f_bdd2_b5bacef3f2ac_scene_2_py",
+      "workspace_temp_b4795542_e91f_4e2f_bdd2_b5bacef3f2ac_scene_3_py"
+    ],
+    "1": [
+      "main_assemble_video",
+      "main_codegenoutput",
+      "main_generate_code",
+      "main_generate_script",
+      "main_get_job_status",
+      "main_health",
+      "main_run_pipeline",
+      "main_start_generation",
+      "main_validate_code",
+      "services_assembler_app_main_py",
+      "services_code_generator_app_main_py",
+      "services_orchestrator_app_main_py",
+      "services_script_writer_app_main_py",
+      "services_validator_app_main_py"
+    ],
+    "2": [
+      "basemodel",
+      "common_generationrequest",
+      "common_jobstate",
+      "common_sceneplan",
+      "requests_assemblerrequest",
+      "requests_codegeneratorrequest",
+      "requests_scriptwriterrequest",
+      "requests_validatorrequest",
+      "requests_voiceoverrequest",
+      "shared_schemas_common_py",
+      "shared_schemas_requests_py"
+    ],
+    "3": [
+      "agent_state_langgraphstate",
+      "common_scriptresponse",
+      "responses_assemblerresponse",
+      "responses_codegeneratorresponse",
+      "responses_scriptwriterresponse",
+      "responses_validatorresponse",
+      "responses_voiceoverresponse",
+      "shared_models_agent_state_py",
+      "shared_schemas_responses_py",
+      "typeddict"
+    ],
+    "4": [
+      "graph_assembler_node",
+      "graph_code_generator_node",
+      "graph_post",
+      "graph_script_writer_node",
+      "graph_validation_router",
+      "graph_validator_node",
+      "graph_voiceover_node",
+      "services_orchestrator_app_core_graph_py"
+    ],
+    "5": [
+      "main_generate_espeak_fallback",
+      "main_generate_openai_tts",
+      "main_generate_voiceover",
+      "main_rationale_36",
+      "main_rationale_60",
+      "services_voiceover_app_main_py"
+    ],
+    "6": [
+      "scene_4_scene4",
+      "scene_4_scene4_construct",
+      "workspace_temp_75b45d6c_7b0c_45d3_ac8f_42cda3e0fe55_scene_4_py",
+      "workspace_temp_b4795542_e91f_4e2f_bdd2_b5bacef3f2ac_scene_4_py"
+    ],
+    "7": [
+      "basesettings",
+      "config_settings",
+      "shared_config_py"
+    ],
+    "8": [
+      "services_assembler_app_init_py"
+    ],
+    "9": [
+      "services_code_generator_app_init_py"
+    ],
+    "10": [
+      "services_orchestrator_app_init_py"
+    ],
+    "11": [
+      "services_script_writer_app_init_py"
+    ],
+    "12": [
+      "services_validator_app_init_py"
+    ],
+    "13": [
+      "services_voiceover_app_init_py"
+    ],
+    "14": [
+      "shared_init_py"
+    ],
+    "15": [
+      "shared_database_init_py"
+    ],
+    "16": [
+      "shared_models_init_py"
+    ],
+    "17": [
+      "shared_schemas_init_py"
+    ]
+  },
+  "cohesion": {
+    "0": 0.12,
+    "1": 0.14,
+    "2": 0.47,
+    "3": 0.29,
+    "4": 0.43,
+    "5": 0.47,
+    "6": 0.5,
+    "7": 0.67,
+    "8": 1.0,
+    "9": 1.0,
+    "10": 1.0,
+    "11": 1.0,
+    "12": 1.0,
+    "13": 1.0,
+    "14": 1.0,
+    "15": 1.0,
+    "16": 1.0,
+    "17": 1.0
+  },
+  "gods": [
+    {
+      "id": "common_scriptresponse",
+      "label": "ScriptResponse",
+      "edges": 8
+    },
+    {
+      "id": "common_sceneplan",
+      "label": "ScenePlan",
+      "edges": 7
+    },
+    {
+      "id": "common_jobstate",
+      "label": "JobState",
+      "edges": 7
+    },
+    {
+      "id": "main_health",
+      "label": "health()",
+      "edges": 6
+    },
+    {
+      "id": "graph_post",
+      "label": "_post()",
+      "edges": 6
+    },
+    {
+      "id": "requests_voiceoverrequest",
+      "label": "VoiceoverRequest",
+      "edges": 6
+    },
+    {
+      "id": "scene_1_scene1",
+      "label": "Scene1",
+      "edges": 6
+    },
+    {
+      "id": "requests_codegeneratorrequest",
+      "label": "CodeGeneratorRequest",
+      "edges": 5
+    },
+    {
+      "id": "responses_voiceoverresponse",
+      "label": "VoiceoverResponse",
+      "edges": 5
+    },
+    {
+      "id": "scene_2_scene2",
+      "label": "Scene2",
+      "edges": 5
+    }
+  ],
+  "surprises": [
+    {
+      "source": "CodeGenOutput",
+      "target": "CodeGeneratorRequest",
+      "source_files": [
+        "services\\code-generator\\app\\main.py",
+        "shared\\schemas\\requests.py"
+      ],
+      "confidence": "INFERRED",
+      "relation": "uses",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
+    },
+    {
+      "source": "CodeGenOutput",
+      "target": "CodeGeneratorResponse",
+      "source_files": [
+        "services\\code-generator\\app\\main.py",
+        "shared\\schemas\\responses.py"
+      ],
+      "confidence": "INFERRED",
+      "relation": "uses",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
+    },
+    {
+      "source": "Generate TTS using OpenAI. Returns True if successful.",
+      "target": "VoiceoverRequest",
+      "source_files": [
+        "services\\voiceover\\app\\main.py",
+        "shared\\schemas\\requests.py"
+      ],
+      "confidence": "INFERRED",
+      "relation": "uses",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
+    },
+    {
+      "source": "Generate TTS using OpenAI. Returns True if successful.",
+      "target": "VoiceoverResponse",
+      "source_files": [
+        "services\\voiceover\\app\\main.py",
+        "shared\\schemas\\responses.py"
+      ],
+      "confidence": "INFERRED",
+      "relation": "uses",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
+    },
+    {
+      "source": "Fallback to espeak (last resort).",
+      "target": "VoiceoverRequest",
+      "source_files": [
+        "services\\voiceover\\app\\main.py",
+        "shared\\schemas\\requests.py"
+      ],
+      "confidence": "INFERRED",
+      "relation": "uses",
+      "why": "inferred connection - not explicitly stated in source; connects across different repos/directories; bridges separate communities"
+    }
+  ],
+  "questions": [
+    {
+      "type": "bridge_node",
+      "question": "Why does `health()` connect `Community 1` to `Community 5`?",
+      "why": "High betweenness centrality (0.108) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `CodeGenOutput` connect `Community 1` to `Community 2`, `Community 3`?",
+      "why": "High betweenness centrality (0.082) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `ScriptResponse` connect `Community 3` to `Community 2`?",
+      "why": "High betweenness centrality (0.041) - this node is a cross-community bridge."
+    },
+    {
+      "type": "verify_inferred",
+      "question": "Are the 6 inferred relationships involving `ScriptResponse` (e.g. with `LangGraphState` and `ScriptWriterResponse`) actually correct?",
+      "why": "`ScriptResponse` has 6 INFERRED edges - model-reasoned connections that need verification."
+    },
+    {
+      "type": "verify_inferred",
+      "question": "Are the 5 inferred relationships involving `ScenePlan` (e.g. with `ScriptWriterRequest` and `CodeGeneratorRequest`) actually correct?",
+      "why": "`ScenePlan` has 5 INFERRED edges - model-reasoned connections that need verification."
+    },
+    {
+      "type": "verify_inferred",
+      "question": "Are the 5 inferred relationships involving `JobState` (e.g. with `ScriptWriterRequest` and `CodeGeneratorRequest`) actually correct?",
+      "why": "`JobState` has 5 INFERRED edges - model-reasoned connections that need verification."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `Community 0` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.12 - nodes in this community are weakly interconnected."
+    }
+  ]
+}

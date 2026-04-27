@@ -16,19 +16,24 @@ services:
     volumes:
       - ./workspace:/workspace
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
       - SCRIPT_WRITER_URL=http://script-writer:8001
       - CODE_GENERATOR_URL=http://code-generator:8002
       - VALIDATOR_URL=http://validator:8003
       - VOICEOVER_URL=http://voiceover:8004
-      - ASSEMBLER_URL=http://assembler:8005
+      - ASSEMBLER_URL=http://compositor:8005
+      - IMAGE_FETCHER_URL=http://image-fetcher:8006
+      - COMPOSITOR_LLM_MODEL=${COMPOSITOR_LLM_MODEL:-minimaxai/minimax-m2.7}
     depends_on:
       - base
       - script-writer
       - code-generator
       - validator
       - voiceover
-      - assembler
+      - compositor
+      - image-fetcher
 
   script-writer:
     build:
@@ -39,7 +44,9 @@ services:
     volumes:
       - ./workspace:/workspace
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - SCRIPT_WRITER_MODEL=${SCRIPT_WRITER_MODEL:-moonshotai/kimi-k2-instruct}
     depends_on:
       - base
 
@@ -52,7 +59,9 @@ services:
     volumes:
       - ./workspace:/workspace
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - CODE_GENERATOR_MODEL=${CODE_GENERATOR_MODEL:-moonshotai/kimi-k2-instruct}
     depends_on:
       - base
 
@@ -64,6 +73,8 @@ services:
       - "8003:8003"
     volumes:
       - ./workspace:/workspace
+    environment:
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
     depends_on:
       - base
 
@@ -76,18 +87,43 @@ services:
     volumes:
       - ./workspace:/workspace
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - VOICEOVER_PROVIDER=${VOICEOVER_PROVIDER:-openai}
+      - DIA2_MODEL=${DIA2_MODEL:-nari-labs/Dia2-1B}
+      - DIA2_DEVICE=${DIA2_DEVICE:-cuda}
+      - DIA2_DTYPE=${DIA2_DTYPE:-bfloat16}
+      - DIA2_CFG_SCALE=${DIA2_CFG_SCALE:-2.0}
+      - DIA2_TEMPERATURE=${DIA2_TEMPERATURE:-0.8}
     depends_on:
       - base
 
-  assembler:
+  image-fetcher:
     build:
       context: .
-      dockerfile: infrastructure/docker/Dockerfile.assembler
+      dockerfile: infrastructure/docker/Dockerfile.image-fetcher
+    ports:
+      - "8006:8006"
+    volumes:
+      - ./workspace:/workspace
+    environment:
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PEXELS_API_KEY=${PEXELS_API_KEY}
+    depends_on:
+      - base
+
+  compositor:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.compositor
     ports:
       - "8005:8005"
     volumes:
       - ./workspace:/workspace
+    environment:
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - COMPOSITOR_LLM_MODEL=${COMPOSITOR_LLM_MODEL:-minimaxai/minimax-m2.7}
     depends_on:
       - base
 

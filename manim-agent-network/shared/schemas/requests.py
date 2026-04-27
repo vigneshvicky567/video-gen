@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Dict, List, Optional
 from shared.schemas.common import ScenePlan, JobState
 
 class ScriptWriterRequest(BaseModel):
@@ -25,3 +25,10 @@ class AssemblerRequest(BaseModel):
     job_id: str
     render_paths: dict[int, str]
     audio_paths: dict[int, str]
+    scene_plans: List[ScenePlan]
+    image_paths: Dict[int, List[str]]
+    script_title: str
+
+class ImageFetcherRequest(BaseModel):
+    job_id: str
+    scenes: List[ScenePlan]
