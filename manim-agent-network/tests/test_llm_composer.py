@@ -104,36 +104,12 @@ def test_build_composition_prompt():
     assert "actual_audio_duration_seconds: 6.0" in prompt
     
     # Check layout instructions
-    assert "1280px" in prompt  # video panel width
-    assert "720px" in prompt   # video panel height
-    assert "600px" in prompt   # image width
-    assert "400px" in prompt   # image height
-    assert "120 characters" in prompt  # lower-third truncation
-    
-    # Check image paths
-    assert "/workspace/temp/job1/images/scene_1/img_0.jpg" in prompt
-    assert "(none available)" in prompt  # for scene 2
+    assert "data-duration='10.5'" in prompt
+    assert "media elements include id" in prompt
 
 
-@patch("services.compositor.app.llm_composer.get_llm_client")
-def test_compose_html_success(mock_get_client, tmp_path):
-    """Test successful HTML composition."""
-    # Mock NVIDIA NIM client response
-    mock_client = Mock()
-    mock_get_client.return_value = mock_client
-    
-    mock_response = Mock()
-    mock_response.choices = [Mock()]
-    mock_response.choices[0].message.content = """
-    <!DOCTYPE html>
-    <html>
-    <head><title>Composition</title></head>
-    <body><h1>Test</h1></body>
-    </html>
-    """
-    mock_client.chat.completions.create.return_value = mock_response
-    
-    # Call compose_html
+def test_compose_html_success(tmp_path):
+    """Test successful deterministic HTML composition."""
     scene_timings = [
         SceneTimingRecord(
             scene_id=1,
@@ -147,44 +123,20 @@ def test_compose_html_success(mock_get_client, tmp_path):
     
     with patch("services.compositor.app.llm_composer.settings") as mock_settings:
         mock_settings.WORKSPACE_DIR = str(tmp_path)
-        mock_settings.COMPOSITOR_LLM_MODEL = "minimaxai/minimax-m2.5"
         
-        result = compose_html("Test Title", scene_timings, {}, "job1")
-    
-    # Verify NIM client was called
-    assert mock_client.chat.completions.create.called
+        result = compose_html("Test Title", scene_timings, {}, "job1", [])
     
     # Verify file was written
     output_file = tmp_path / "temp" / "job1" / "composition.html"
     assert output_file.exists()
     html_content = output_file.read_text()
     assert "<!DOCTYPE html>" in html_content
+    assert 'data-composition-id="main"' in html_content
+    assert 'data-duration="5"' in html_content
+    assert 'window.__timelines["main"] = tl' in html_content
 
 
-@patch("services.compositor.app.llm_composer.get_llm_client")
-def test_compose_html_retry_on_no_html(mock_get_client, tmp_path):
-    """Test that compose_html retries when no HTML is found."""
-    mock_client = Mock()
-    mock_get_client.return_value = mock_client
-    
-    # First two calls return no HTML, third call returns valid HTML
-    mock_response_no_html = Mock()
-    mock_response_no_html.choices = [Mock()]
-    mock_response_no_html.choices[0].message.content = "No HTML here"
-    
-    mock_response_valid = Mock()
-    mock_response_valid.choices = [Mock()]
-    mock_response_valid.choices[0].message.content = """
-    <!DOCTYPE html>
-    <html><body><h1>Success</h1></body></html>
-    """
-    
-    mock_client.chat.completions.create.side_effect = [
-        mock_response_no_html,
-        mock_response_no_html,
-        mock_response_valid,
-    ]
-    
+def test_compose_html_uses_scene_plan_narration(tmp_path):
     scene_timings = [
         SceneTimingRecord(
             scene_id=1,
@@ -198,46 +150,33 @@ def test_compose_html_retry_on_no_html(mock_get_client, tmp_path):
     
     with patch("services.compositor.app.llm_composer.settings") as mock_settings:
         mock_settings.WORKSPACE_DIR = str(tmp_path)
-        mock_settings.COMPOSITOR_LLM_MODEL = "minimaxai/minimax-m2.5"
-        
-        result = compose_html("Test Title", scene_timings, {}, "job1")
-    
-    # Verify it was called 3 times
-    assert mock_client.chat.completions.create.call_count == 3
+        compose_html(
+            "Test Title",
+            scene_timings,
+            {},
+            "job1",
+            [{"scene_id": 1, "narration_text": "Narration text"}],
+        )
+
+    html_content = (tmp_path / "temp" / "job1" / "composition.html").read_text()
+    assert "Narration text" in html_content
 
 
-@patch("services.compositor.app.llm_composer.get_llm_client")
-def test_compose_html_raises_after_max_retries(mock_get_client):
-    """Test that compose_html raises AssemblyError after 3 failed attempts."""
-    mock_client = Mock()
-    mock_get_client.return_value = mock_client
-    
-    # All calls return no HTML
-    mock_response = Mock()
-    mock_response.choices = [Mock()]
-    mock_response.choices[0].message.content = "No HTML here"
-    
-    mock_client.chat.completions.create.return_value = mock_response
-    
+def test_compose_html_root_duration_uses_last_scene_end(tmp_path):
     scene_timings = [
         SceneTimingRecord(
             scene_id=1,
             render_path="/workspace/temp/job1/renders/scene_1.mp4",
             audio_path="/workspace/temp/job1/audio/scene_1.wav",
-            actual_video_duration_seconds=5.0,
+            actual_video_duration_seconds=4.0,
             actual_audio_duration_seconds=5.0,
-            start_time_seconds=0.0,
+            start_time_seconds=6.0,
         ),
     ]
-    
+
     with patch("services.compositor.app.llm_composer.settings") as mock_settings:
-        mock_settings.WORKSPACE_DIR = "/workspace"
-        mock_settings.COMPOSITOR_LLM_MODEL = "minimaxai/minimax-m2.5"
-        
-        with pytest.raises(AssemblyError) as exc_info:
-            compose_html("Test Title", scene_timings, {}, "job1")
-        
-        assert "3 attempts" in str(exc_info.value)
-    
-    # Verify it was called 3 times
-    assert mock_client.chat.completions.create.call_count == 3
+        mock_settings.WORKSPACE_DIR = str(tmp_path)
+        compose_html("Test Title", scene_timings, {}, "job1", [])
+
+    html_content = (tmp_path / "temp" / "job1" / "composition.html").read_text()
+    assert 'data-duration="11"' in html_content

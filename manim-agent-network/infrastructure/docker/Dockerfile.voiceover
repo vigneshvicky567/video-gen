@@ -1,7 +1,12 @@
 FROM base-manim-agent
 
-# Install git so we can clone Dia2 from GitHub
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+# Install helpers and local phoneme runtime used by Kokoro.
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    espeak-ng \
+    libespeak-ng1 \
+    && rm -rf /var/lib/apt/lists/*
 
 # Dia2 requires torch>=2.8.0 from the PyTorch CUDA 12.8 index
 # Increase timeout and use retries for reliability
@@ -12,7 +17,7 @@ RUN UV_HTTP_TIMEOUT=600 uv pip install --system --no-cache \
     --index-url https://download.pytorch.org/whl/cu124 \
     "torch>=2.6.0"
 
-# Install Dia2 and its remaining dependencies from GitHub
+# Install Dia2 and Kokoro dependencies.
 RUN uv pip install --system --no-cache \
     "numpy>=2.1.0,<3.0" \
     "transformers>=4.55.3" \
@@ -20,11 +25,23 @@ RUN uv pip install --system --no-cache \
     "huggingface-hub>=0.24.7" \
     "sphn>=0.2.0" \
     "soundfile>=0.12.1" \
-    "whisper-timestamped>=1.14.2"
+    "whisper-timestamped>=1.14.2" \
+    "kokoro-onnx>=0.5.0" \
+    "onnxruntime>=1.20.0"
 
-RUN uv pip install --system --no-cache \
-    --no-build-isolation \
-    "git+https://github.com/nari-labs/dia2.git"
+# Install Dia2 from the official source. The PyPI dia2 package can be incomplete.
+RUN uv pip install --system --no-cache --no-build-isolation \
+    "git+https://github.com/nari-labs/dia2.git@main" && \
+    python -c "from dia2 import Dia2, GenerationConfig, SamplingConfig"
+
+# Preload lightweight Kokoro fallback assets so offline fallback works at runtime.
+RUN mkdir -p /models/kokoro && \
+    curl -L --retry 5 --retry-delay 3 \
+      -o /models/kokoro/kokoro-v1.0.int8.onnx \
+      https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx && \
+    curl -L --retry 5 --retry-delay 3 \
+      -o /models/kokoro/voices-v1.0.bin \
+      https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
 
 COPY shared/ /app/shared/
 COPY services/voiceover/ /app/

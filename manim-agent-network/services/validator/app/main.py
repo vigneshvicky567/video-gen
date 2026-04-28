@@ -8,7 +8,6 @@ import logging
 import glob
 import uuid
 import time
-from html.parser import HTMLParser
 
 # LangSmith Tracing
 app = FastAPI(title="Validator Service")
@@ -44,72 +43,46 @@ def detect_content_type(code_path: str) -> str:
         return "manim"
 
 
-class HyperFramesValidator(HTMLParser):
-    """HTML parser to validate HyperFrames structure."""
-    
-    def __init__(self):
-        super().__init__()
-        self.has_stage = False
-        self.has_clips = False
-        self.clips = []
-        self.errors = []
-        
-    def handle_starttag(self, tag, attrs):
-        attrs_dict = dict(attrs)
-        
-        if tag == "div" and attrs_dict.get("class") == "stage":
-            self.has_stage = True
-            
-        if "clip" in attrs_dict.get("class", ""):
-            self.has_clips = True
-            clip_info = {
-                "tag": tag,
-                "data_start": attrs_dict.get("data-start"),
-                "data_duration": attrs_dict.get("data-duration"),
-                "data_track_index": attrs_dict.get("data-track-index")
-            }
-            self.clips.append(clip_info)
-            
-            # Validate required attributes
-            if not clip_info["data_start"]:
-                self.errors.append("Clip missing data-start attribute")
-            if not clip_info["data_duration"]:
-                self.errors.append("Clip missing data-duration attribute")
-            if not clip_info["data_track_index"]:
-                self.errors.append("Clip missing data-track-index attribute")
-
-
-def validate_hyperframes(code_path: str) -> tuple[bool, str, str]:
+def validate_hyperframes(code_path: str) -> tuple:
     """Validate HyperFrames HTML structure.
     
-    Args:
-        code_path: Path to the HTML file
-        
-    Returns:
-        Tuple of (success, render_path, error_message)
+    Checks for valid HTML with at least one clip element (data-start + data-duration).
+    Returns (success, render_path, error_message).
     """
     try:
         with open(code_path, "r", encoding="utf-8") as f:
             html_content = f.read()
-        
-        # Parse HTML
-        parser = HyperFramesValidator()
-        parser.feed(html_content)
-        
-        # Check for required elements
-        if not parser.has_stage:
-            return False, "", "HyperFrames HTML missing .stage div"
-            
-        if not parser.has_clips:
-            return False, "", "HyperFrames HTML has no clips with data attributes"
-        
-        if parser.errors:
-            return False, "", "; ".join(parser.errors)
-        
+
+        if not html_content.strip():
+            return False, "", "HTML file is empty"
+
+        # Must be valid HTML
+        if "<!DOCTYPE html" not in html_content.lower() and "<html" not in html_content.lower():
+            return False, "", "File does not appear to be valid HTML"
+
+        # Must have at least one clip with data-start (HyperFrames requirement)
+        if "data-start" not in html_content:
+            return False, "", "HyperFrames HTML has no elements with data-start attribute"
+
+        if "data-duration" not in html_content:
+            return False, "", "HyperFrames HTML has no elements with data-duration attribute"
+
+        if "data-composition-id" not in html_content:
+            return False, "", "HyperFrames HTML root is missing data-composition-id"
+
+        if "data-width" not in html_content or "data-height" not in html_content:
+            return False, "", "HyperFrames HTML root is missing data-width or data-height"
+
+        if "window.__timelines.push" in html_content:
+            return False, "", "HyperFrames HTML must register timelines with window.__timelines['id'] = tl, not push()"
+
+        if "window.__timelines[" not in html_content:
+            return False, "", "HyperFrames HTML is missing window.__timelines['id'] registration"
+
         logger.info(f"HyperFrames validation passed for {code_path}")
-        # Return the HTML path as render_path - actual rendering happens in compositor
+        # Return the HTML path as render_path — actual rendering happens in compositor
         return True, code_path, ""
-        
+
     except Exception as e:
         logger.error(f"Error validating HyperFrames: {e}")
         return False, "", str(e)
@@ -223,7 +196,7 @@ async def _validate_manim(request, run_id, start_time):
     cmd = [
         "manim",
         "render",
-        "-ql", # Low quality for fast rendering in dev, can change to -qh for high
+        "-qm", # Medium quality 720p30 (1280x720 landscape) - changed from -ql (480p15 portrait)
         "--media_dir", output_dir,
         request.code_path,
         scene_class_name
@@ -250,14 +223,21 @@ async def _validate_manim(request, run_id, start_time):
 
         if process.returncode == 0:
             logger.info(f"Render successful for scene {request.scene_id}")
-            # Find the rendered mp4 file. Manim outputs to: media_dir/videos/filename/1080p60/SceneName.mp4
+            # Find the rendered mp4 file. Manim outputs to: media_dir/videos/filename/720p30/SceneName.mp4
             # We use glob because the exact resolution folder depends on the -q flag
+            # -qm produces 720p30, -ql produces 480p15, -qh produces 1080p60
             search_path = os.path.join(output_dir, "videos", "*", "*", f"{scene_class_name}.mp4")
             mp4_files = glob.glob(search_path)
 
             total_duration = time.time() - start_time
             
             if mp4_files:
+                if any("480p15" in p.replace("\\", "/") for p in mp4_files):
+                    return ValidatorResponse(
+                        scene_id=request.scene_id,
+                        success=False,
+                        error_log="Manim rendered 480p15 output; validator must run with -qm and produce 720p30."
+                    )
                 # Final trace update
                 if _tracer:
                     try:

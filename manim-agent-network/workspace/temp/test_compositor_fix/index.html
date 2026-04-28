@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Video</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #0f0f0f;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        
+        #canvas {
+            position: relative;
+            width: 1920px;
+            height: 1080px;
+            background: #0f0f0f;
+        }
+        
+        .clip {
+            position: absolute;
+        }
+        
+        .lower-third {
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px 40px;
+            font-size: 24px;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            text-align: center;
+            transform: translateY(100%);
+        }
+        
+        h1 {
+            font-size: 96px;
+            color: white;
+            text-align: center;
+            margin: 0;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            opacity: 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas">
+        <!-- Title Card -->
+        <h1 class="clip" data-start="0" data-duration="3" data-track-index="0">Test Video</h1>
+        
+        <!-- Scene 1 - HyperFrames -->
+        <iframe class="clip" 
+                data-start="0" 
+                data-duration="5" 
+                data-track-index="1"
+                src="/workspace/temp/5f201c7e-2da2-4778-901e-7ca9aab0e578/scene_1.html"
+                style="position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; border: none;"
+                frameborder="0" 
+                allowfullscreen></iframe>
+        
+        <div class="clip lower-third" 
+             data-start="0" 
+             data-duration="5" 
+             data-track-index="2">
+             Scene 1: HyperFrames demonstration with interactive elements and smooth animations
+        </div>
+        
+        <audio class="clip" 
+               data-start="0" 
+               data-duration="4.38" 
+               data-track-index="3"
+               src="/workspace/temp/5f201c7e-2da2-4778-901e-7ca9aab0e578/scene_1_audio.wav"></audio>
+        
+        <!-- Transition overlay for Scene 1 to Scene 2 -->
+        <div id="transition1" style="position: absolute; width: 1920px; height: 1080px; background: #0f0f0f; opacity: 0; z-index: 100;"></div>
+        
+        <!-- Scene 2 - Manim Video -->
+        <video class="clip" 
+               data-start="5" 
+               data-duration="11" 
+               data-track-index="5"
+               src="/workspace/temp/5f201c7e-2da2-4778-901e-7ca9aab0e578/render_scene_2/videos/scene_2/480p15/Scene2.mp4"
+               style="position: absolute; left: 0; top: 180px; width: 1280px; height: 720px;"
+               muted></video>
+        
+        <div class="clip lower-third" 
+             data-start="5" 
+             data-duration="11" 
+             data-track-index="6">
+             Scene 2: Mathematical visualization showcasing geometric transformations and algorithms
+        </div>
+        
+        <audio class="clip" 
+               data-start="5" 
+               data-duration="5.563" 
+               data-track-index="7"
+               src="/workspace/temp/5f201c7e-2da2-4778-901e-7ca9aab0e578/scene_2_audio.wav"></audio>
+    </div>
+
+    <script>
+        // Initialize GSAP timelines
+        gsap.registerPlugin();
+        window.__timelines = window.__timelines || [];
+        
+        // Title animation
+        const titleTimeline = gsap.timeline();
+        titleTimeline.to("h1", {
+            opacity: 1,
+            duration: 1,
+            ease: "power2.out"
+        });
+        window.__timelines.push(titleTimeline);
+        
+        // Scene entrance animations
+        // Scene 1 - No iframe animation (internal animations)
+        
+        // Scene 2 video entrance
+        const scene2Timeline = gsap.timeline({delay: 5});
+        scene2Timeline.from("video[data-start='5']", {
+            opacity: 0,
+            x: -100,
+            duration: 0.4,
+            ease: "power2.out"
+        });
+        window.__timelines.push(scene2Timeline);
+        
+        // Lower third animations
+        document.querySelectorAll('.lower-third').forEach(element => {
+            const timeline = gsap.timeline({delay: parseFloat(element.getAttribute('data-start'))});
+            timeline.to(element, {
+                y: 0,
+                duration: 0.4,
+                ease: "power2.out"
+            });
+            window.__timelines.push(timeline);
+        });
+        
+        // Scene transition
+        const transitionTimeline = gsap.timeline({delay: 4.8});
+        transitionTimeline
+            .to("#transition1", {
+                opacity: 1,
+                duration: 0.2,
+                ease: "power2.in"
+            })
+            .to("#transition1", {
+                opacity: 0,
+                duration: 0.2,
+                ease: "power2.out"
+            });
+        window.__timelines.push(transitionTimeline);
+        
+        // Auto-play audio elements
+        document.querySelectorAll('audio').forEach(audio => {
+            audio.addEventListener('loadedmetadata', () => {
+                const startTime = parseFloat(audio.getAttribute('data-start'));
+                setTimeout(() => audio.play(), startTime * 1000);
+            });
+        });
+    </script>
+</body>
+</html>

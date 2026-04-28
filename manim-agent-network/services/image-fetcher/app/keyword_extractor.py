@@ -11,8 +11,6 @@ import json
 import logging
 from typing import List
 
-from openai import OpenAI
-
 from shared.config import settings
 from shared.llm_client import get_llm_client
 
@@ -39,7 +37,7 @@ def extract_keywords(narration_text: str, visual_description: str) -> List[str]:
     """
     Extract 1-5 keywords from narration_text and visual_description using an LLM.
     
-    Makes a single openai.chat.completions.create call per scene. The system prompt
+    Makes a single NVIDIA chat completion call per scene. The system prompt
     instructs the model to return a JSON array of 1-5 keywords.
     
     On JSON parse failure, falls back to first 3 whitespace-split tokens of narration_text.

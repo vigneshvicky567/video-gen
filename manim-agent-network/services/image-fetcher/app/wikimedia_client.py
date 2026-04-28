@@ -50,7 +50,12 @@ async def search_wikimedia(keywords: List[str]) -> List[str]:
     image_urls: List[str] = []
     
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(
+            timeout=30.0,
+            headers={
+                "User-Agent": "ManimAgentNetwork/1.0 (https://github.com/manim-agent-network; contact@example.com) python-httpx"
+            }
+        ) as client:
             # Iterate through keywords until we have at least one image or exhaust keywords
             for keyword in keywords:
                 if len(image_urls) >= 3:

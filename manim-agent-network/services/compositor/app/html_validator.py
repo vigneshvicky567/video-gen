@@ -1,128 +1,119 @@
-"""HTML validation for HyperFrames composition documents.
-
-This module provides functionality to:
-1. Parse HTML composition documents
-2. Extract and validate media file references
-3. Validate required HyperFrames attributes
-4. Count media element types
-"""
+"""HTML validation for HyperFrames composition documents."""
 
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import List, Set, Tuple
+import re
+from typing import Dict, List, Optional
 
 from .duration_prober import AssemblyError
 
 
-# Required attributes for HyperFrames timed elements
 REQUIRED_ATTRS = ["data-start", "data-duration", "data-track-index"]
-REQUIRED_CLASS = "clip"
+TIMED_TAGS = ("video", "audio", "img", "iframe")
+COUNTED_TAGS = ("video", "audio", "img")
 
 
 class CompositionValidator(HTMLParser):
-    """HTML parser that collects src attributes from video, audio, and img tags.
-    
-    Attributes:
-        src_paths: List of all src attribute values found in media elements
-        counts: Dictionary tracking count of each media element type
-        missing_clip_class: Set of elements missing class="clip"
-        missing_required_attrs: Dict mapping element to set of missing attributes
-        video_not_muted: List of video elements without muted attribute
-    """
-    
+    """Validates HyperFrames HTML composition."""
+
     def __init__(self):
         super().__init__()
         self.src_paths: List[str] = []
-        self.counts = {"video": 0, "audio": 0, "img": 0}
-        self.missing_clip_class: Set[str] = set()
-        self.missing_required_attrs: dict = {}  # element -> set of missing attrs
-        self.video_not_muted: List[str] = []
-        self._current_element: str = ""
-        self._current_attrs: dict = {}
-    
+        self.has_any_timed_element = False
+        self.errors: List[str] = []
+        self.counts: Dict[str, int] = {tag: 0 for tag in COUNTED_TAGS}
+        self.root_attrs: Optional[dict] = None
+
     def handle_starttag(self, tag: str, attrs: list):
-        """Handle opening tags, collecting src attributes from media elements.
-        
-        Args:
-            tag: The HTML tag name
-            attrs: List of (attribute, value) tuples
-        """
+        attrs_dict = dict(attrs)
+
         if tag in self.counts:
             self.counts[tag] += 1
-        
-        attrs_dict = dict(attrs)
-        
-        # Track current element for error reporting
-        self._current_element = tag
-        self._current_attrs = attrs_dict
-        
-        # Collect src paths
-        if tag in ("video", "audio", "img") and "src" in attrs_dict:
+
+        is_root_composition = "data-composition-id" in attrs_dict and self.root_attrs is None
+        if is_root_composition:
+            self.root_attrs = attrs_dict
+
+        # Collect src paths from media elements
+        if tag in TIMED_TAGS and "src" in attrs_dict:
             self.src_paths.append(attrs_dict["src"])
-        
-        # Validate class="clip" for timed elements
-        element_class = attrs_dict.get("class", "")
-        if tag in ("video", "audio", "img", "div", "span", "h1", "h2", "h3", "p", "iframe"):
-            if REQUIRED_CLASS not in element_class.split():
-                self.missing_clip_class.add(f"<{tag}> at position {self.getpos()}")
-        
-        # Validate required data attributes for elements with class="clip"
-        if REQUIRED_CLASS in element_class.split():
-            missing_attrs = set()
-            for req_attr in REQUIRED_ATTRS:
-                if req_attr not in attrs_dict:
-                    missing_attrs.add(req_attr)
-            if missing_attrs:
-                self.missing_required_attrs[f"<{tag}>"] = missing_attrs
-        
-        # Check video elements are muted
-        if tag == "video" and "muted" not in attrs_dict:
-            self.video_not_muted.append(f"<video> at position {self.getpos()}")
+
+        # If element has data-start, it's a timed element — validate it
+        if "data-start" in attrs_dict or "data-duration" in attrs_dict:
+            self.has_any_timed_element = True
+            if is_root_composition:
+                return
+            missing = [a for a in REQUIRED_ATTRS if a not in attrs_dict]
+            if missing:
+                self.errors.append(
+                    f"<{tag}> at {self.getpos()} missing: {missing}"
+                )
+            if tag in ("video", "audio") and "id" not in attrs_dict:
+                self.errors.append(f"<{tag}> at {self.getpos()} missing: ['id']")
+            if tag == "video":
+                if "muted" not in attrs_dict:
+                    self.errors.append(f"<video> at {self.getpos()} missing muted")
+                if "playsinline" not in attrs_dict:
+                    self.errors.append(f"<video> at {self.getpos()} missing playsinline")
 
 
 def validate_composition(html_path: str) -> None:
     """Parse HTML composition and verify all requirements.
-    
+
     Validates:
-    1. HTML is well-formed
-    2. All src paths exist on disk
-    3. All timed elements have class="clip"
-    4. All elements with class="clip" have data-start, data-duration, data-track-index
-    5. Video elements are muted
-    
-    Args:
-        html_path: Path to the HTML composition file
-        
+    1. HTML is parseable
+    2. At least one timed element exists
+    3. All timed elements have data-start, data-duration, data-track-index
+    4. All referenced media files exist on disk
+
     Raises:
-        HTMLParseError: If the HTML is malformed (propagated from HTMLParser)
         AssemblyError: If any validation fails
     """
-    content = Path(html_path).read_text()
+    html_path_obj = Path(html_path)
+    content = html_path_obj.read_text()
     validator = CompositionValidator()
-    validator.feed(content)  # raises HTMLParseError if malformed
-    
+    validator.feed(content)
+
     errors: List[str] = []
+
+    # Must have at least one timed element
+    if not validator.has_any_timed_element:
+        errors.append("No timed elements (data-start) found in composition HTML")
+
+    if validator.root_attrs is None:
+        errors.append("Root composition is missing data-composition-id")
+    else:
+        root = validator.root_attrs
+        for attr in ("data-start", "data-duration", "data-width", "data-height"):
+            if attr not in root:
+                errors.append(f"Root composition missing {attr}")
+        if root.get("data-width") != "1920" or root.get("data-height") != "1080":
+            errors.append("Root composition dimensions must be 1920x1080")
+
+    # Check for missing required attributes on timed elements
+    if validator.errors:
+        errors.extend(validator.errors)
+
+    if "window.__timelines" not in content:
+        errors.append("Missing window.__timelines registration")
+    if "window.__timelines.push" in content:
+        errors.append("Invalid timeline registration: use window.__timelines['main'] = tl")
+    if not re.search(r"window\.__timelines\s*\[\s*['\"]main['\"]\s*\]\s*=", content):
+        errors.append("Missing window.__timelines['main'] assignment")
+
+    # Check for missing media files (only local paths, skip http/https)
+    # Resolve paths relative to the composition HTML directory
+    composition_dir = html_path_obj.parent
+    missing = []
+    for p in validator.src_paths:
+        if not p.startswith("http"):
+            # Resolve relative paths from composition directory
+            full_path = composition_dir / p
+            if not full_path.exists():
+                missing.append(p)
     
-    # Check for missing media files
-    missing = [p for p in validator.src_paths if not Path(p).exists()]
     if missing:
         errors.append(f"Missing media files: {missing}")
-    
-    # Check for missing class="clip"
-    if validator.missing_clip_class:
-        errors.append(f"Elements missing class='clip': {validator.missing_clip_class}")
-    
-    # Check for missing required attributes
-    if validator.missing_required_attrs:
-        attr_errors = [
-            f"{elem} missing: {attrs}" 
-            for elem, attrs in validator.missing_required_attrs.items()
-        ]
-        errors.append(f"Elements missing required attributes: {attr_errors}")
-    
-    # Check for video elements not muted
-    if validator.video_not_muted:
-        errors.append(f"Video elements not muted: {validator.video_not_muted}")
-    
+
     if errors:
         raise AssemblyError("; ".join(errors))

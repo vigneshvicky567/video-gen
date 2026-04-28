@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neural Networks in 90 Seconds</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000;
+        }
+        .lower-third {
+            position: absolute;
+            bottom: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px 40px;
+            border-radius: 8px;
+            font-size: 24px;
+            font-weight: 300;
+            max-width: 800px;
+            text-align: center;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+    <div id='composition' data-composition-id='main' data-width='1920' data-height='1080' style='position:relative;width:1920px;height:1080px;background:#0f0f0f;overflow:hidden;'>
+        
+        <!-- Title Card -->
+        <h1 class='clip' id='title-card' data-start='0' data-duration='3' data-track-index='0' style='position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); color:white; font-size:84px; font-weight:300; margin:0; text-align:center; opacity:0;'>Neural Networks in 90 Seconds</h1>
+        
+        <!-- Scene 1: HyperFrames -->
+        <iframe class='clip' id='iframe-scene-1' data-start='0' data-duration='5' data-track-index='1' src='scene_1.html' style='position:absolute;left:0;top:0;width:1920px;height:1080px;border:0;' frameborder='0' allowfullscreen></iframe>
+        <div class='clip lower-third' id='lower-1' data-start='0' data-duration='4.38' data-track-index='2'>Neural networks are computational models inspired by the human brain. They learn patterns from data</div>
+        <audio class='clip' id='audio-scene-1' data-start='0' data-duration='4.38' data-track-index='3' src='scene_1_audio.wav'></audio>
+        
+        <!-- Scene 2: Manim -->
+        <video class='clip' id='video-scene-2' data-start='5' data-duration='11' data-track-index='4' src='render_scene_2/videos/scene_2/480p15/Scene2.mp4' style='position:absolute;left:320px;top:180px;width:1280px;height:720px;' muted></video>
+        <div class='clip lower-third' id='lower-2' data-start='5' data-duration='5.563' data-track-index='5'>A neuron receives input signals, processes them, and outputs a signal to connected neurons</div>
+        <audio class='clip' id='audio-scene-2' data-start='5' data-duration='5.563' data-track-index='6' src='scene_2_audio.wav'></audio>
+        
+        <!-- Scene 3: Manim -->
+        <video class='clip' id='video-scene-3' data-start='16' data-duration='16.733' data-track-index='7' src='render_scene_3/videos/scene_3/480p15/Scene3.mp4' style='position:absolute;left:320px;top:180px;width:1280px;height:720px;' muted></video>
+        <div class='clip lower-third' id='lower-3' data-start='16' data-duration='5.252' data-track-index='8'>Layers of neurons form a network. Input data flows forward, making predictions through each layer</div>
+        <audio class='clip' id='audio-scene-3' data-start='16' data-duration='5.252' data-track-index='9' src='scene_3_audio.wav'></audio>
+        
+        <!-- Scene 4: Manim -->
+        <video class='clip' id='video-scene-4' data-start='32.733' data-duration='13.067' data-track-index='10' src='render_scene_4/videos/scene_4/480p15/Scene4.mp4' style='position:absolute;left:320px;top:180px;width:1280px;height:720px;' muted></video>
+        <div class='clip lower-third' id='lower-4' data-start='32.733' data-duration='4.242' data-track-index='11'>Backpropagation adjusts weights based on errors, improving accuracy through repeated training</div>
+        <audio class='clip' id='audio-scene-4' data-start='32.733' data-duration='4.242' data-track-index='12' src='scene_4_audio.wav'></audio>
+        
+        <!-- Scene 5: HyperFrames -->
+        <iframe class='clip' id='iframe-scene-5' data-start='45.8' data-duration='8' data-track-index='13' src='scene_5.html' style='position:absolute;left:0;top:0;width:1920px;height:1080px;border:0;' frameborder='0' allowfullscreen></iframe>
+        <div class='clip lower-third' id='lower-5' data-start='45.8' data-duration='6.86' data-track-index='14'>Neural networks power AI applications from image recognition to language processing, transforming</div>
+        <audio class='clip' id='audio-scene-5' data-start='45.8' data-duration='6.86' data-track-index='15' src='scene_5_audio.wav'></audio>
+        
+    </div>
+
+    <script src='https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js'></script>
+    <script>
+        // Create main timeline
+        const tl = gsap.timeline({
+            paused: true,
+            onUpdate: () => {
+                const currentTime = tl.time();
+                // Sync audio and video elements
+                document.querySelectorAll('audio, video').forEach(el => {
+                    const start = parseFloat(el.dataset.start);
+                    const duration = parseFloat(el.dataset.duration);
+                    
+                    if (currentTime >= start && currentTime < start + duration) {
+                        if (el.paused && el.readyState >= 2) {
+                            el.currentTime = currentTime - start;
+                            el.play();
+                        }
+                    } else {
+                        el.pause();
+                    }
+                });
+            }
+        });
+
+        // Title card animation
+        tl.to('#title-card', {
+            opacity: 1,
+            duration: 0.6,
+            ease: 'power2.out'
+        });
+
+        // Scene transitions with crossfade
+        const scenes = [
+            { id: 'iframe-scene-1', start: 0 },
+            { id: 'video-scene-2', start: 5 },
+            { id: 'video-scene-3', start: 16 },
+            { id: 'video-scene-4', start: 32.733 },
+            { id: 'iframe-scene-5', start: 45.8 }
+        ];
+
+        scenes.forEach((scene, index) => {
+            if (index > 0) {
+                tl.set(`#${scene.id}`, { opacity: 0 });
+                tl.to(`#${scenes[index - 1].id}`, {
+                    opacity: 0,
+                    duration: 0.4,
+                    ease: 'power2.out'
+                }, scene.start - 0.4);
+                tl.to(`#${scene.id}`, {
+                    opacity: 1,
+                    duration: 0.4,
+                    ease: 'power2.in'
+                }, scene.start - 0.4);
+            }
+        });
+
+        // Register timeline globally
+        window.__timelines = window.__timelines || {};
+        window.__timelines['main'] = tl;
+    </script>
+</body>
+</html>

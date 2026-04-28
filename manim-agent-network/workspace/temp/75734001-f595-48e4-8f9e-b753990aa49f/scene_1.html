@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Deep Learning in 60 Seconds – Scene 1</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden}
+  #stage{position:relative;width:1920px;height:1080px;background:radial-gradient(circle at center,#1a1a3a 0%,#0f0f0f 100%)}
+  .clip{position:absolute}
+  /* neuron icon (svg) */
+  #neuron-icon{top:50%;left:50%;transform:translate(-50%,-50%)}
+  #neuron-icon svg{width:200px;height:200px}
+  /* title & subtitle */
+  #title{font-family:Helvetica,Arial,sans-serif;font-size:96px;font-weight:800;color:#ffffff;text-align:center;top:30%;left:50%;transform:translateX(-50%);white-space:nowrap}
+  #subtitle{font-family:Helvetica,Arial,sans-serif;font-size:48px;font-weight:400;color:#e0e0e0;text-align:center;top:46%;left:50%;transform:translateX(-50%)}
+  /* lower-third */
+  #lower-third{bottom:0;left:0;width:100%;height:100px;background:rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center}
+  #lower-third span{font-family:Helvetica,Arial,sans-serif;font-size:36px;color:#fff;text-shadow:0 0 4px #000}
+</style>
+</head>
+<body>
+<div id="stage">
+  <!-- neuron icon -->
+  <div id="neuron-icon" class="clip" data-start="0" data-duration="5" data-track-index="1">
+    <svg viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="100" cy="60" r="16" fill="#ffffff"/>
+      <circle cx="60" cy="100" r="16" fill="#ffffff"/>
+      <circle cx="140" cy="100" r="16" fill="#ffffff"/>
+      <circle cx="100" cy="140" r="16" fill="#ffffff"/>
+      <line x1="100" y1="76" x2="100" y2="124" stroke="#ffffff" stroke-width="4"/>
+      <line x1="76" y1="88" x2="124" y2="112" stroke="#ffffff" stroke-width="4"/>
+      <line x1="124" y1="88" x2="76" y2="112" stroke="#ffffff" stroke-width="4"/>
+    </svg>
+  </div>
+
+  <!-- title -->
+  <div id="title" class="clip" data-start="0.6" data-duration="1.6" data-track-index="2">Deep Learning in 60 Seconds</div>
+
+  <!-- subtitle -->
+  <div id="subtitle" class="clip" data-start="2.2" data-duration="2.8" data-track-index="3">What, Why & How</div>
+
+  <!-- lower-third -->
+  <div id="lower-third" class="clip" data-start="0" data-duration="5" data-track-index="4">
+    <span>Welcome! In the next minute we’ll demystify deep learning.</span>
+  </div>
+</div>
+
+<script>
+  /* register timelines */
+  window.__timelines = window.__timelines || [];
+
+  /* neuron glow & pulse */
+  const neuronTl = gsap.timeline({repeat:-1});
+  neuronTl
+    .to('#neuron-icon svg', {filter:'drop-shadow(0 0 12px #ffffff)', duration:1.2, ease:'power2.inOut'},0)
+    .to('#neuron-icon svg', {scale:1.08, duration:1.2, ease:'power2.inOut'},0)
+    .to('#neuron-icon svg', {filter:'drop-shadow(0 0 6px #ffffff)', scale:1, duration:1.2, ease:'power2.inOut'},1.2);
+  window.__timelines.push(neuronTl);
+
+  /* title bounce-in */
+  const titleTl = gsap.timeline();
+  titleTl.from('#title', {
+    duration:1.2,
+    y:120,
+    opacity:0,
+    ease:'bounce.out'
+  });
+  window.__timelines.push(titleTl);
+
+  /* subtitle fade-in */
+  const subtitleTl = gsap.timeline();
+  subtitleTl.from('#subtitle', {
+    duration:1,
+    opacity:0,
+    y:20,
+    ease:'power2.out'
+  });
+  window.__timelines.push(subtitleTl);
+
+  /* lower-third slide-up */
+  const lowerTl = gsap.timeline();
+  lowerTl.from('#lower-third', {
+    duration:0.8,
+    y:100,
+    opacity:0,
+    ease:'power2.out'
+  });
+  window.__timelines.push(lowerTl);
+</script>
+</body>
+</html>

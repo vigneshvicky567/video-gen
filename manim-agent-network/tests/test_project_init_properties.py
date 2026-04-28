@@ -201,13 +201,13 @@ _ENV_TEMPLATE_PATH = Path(__file__).parent.parent / ".env.template"
 
 _REQUIRED_ENV_KEYS = [
     ("NVIDIA_API_KEY", "your-nvidia-api-key-here"),
-    ("OPENAI_API_KEY", "your-openai-api-key-here"),
     ("LANGSMITH_API_KEY", "your-langsmith-api-key-here"),
     ("SCRIPT_WRITER_MODEL", "moonshotai/kimi-k2-instruct"),
     ("CODE_GENERATOR_MODEL", "moonshotai/kimi-k2-instruct"),
-    ("VOICEOVER_PROVIDER", "openai"),
-    ("COQUI_MODEL", "xtts_v2"),
-    ("COQUI_REFERENCE_VOICE", ""),
+    ("VOICEOVER_PROVIDER", "dia2"),
+    ("VOICEOVER_FALLBACK_PROVIDER", "kokoro"),
+    ("ALLOW_ESPEAK_FALLBACK", "false"),
+    ("KOKORO_VOICE", "af_sarah"),
 ]
 
 
@@ -248,41 +248,41 @@ def test_env_template_contains_required_keys(key, expected_default):
 
 
 # ---------------------------------------------------------------------------
-# Property 4: Env guard rejects all invalid OPENAI_API_KEY states
-# Feature: project-init, Property 4: Env guard rejects all invalid OPENAI_API_KEY states
+# Property 4: Env guard rejects all invalid NVIDIA_API_KEY states
+# Feature: project-init, Property 4: Env guard rejects all invalid NVIDIA_API_KEY states
 # Validates: Requirements 3.10
 # ---------------------------------------------------------------------------
 
-# Strategy for invalid OPENAI_API_KEY values
+# Strategy for invalid NVIDIA_API_KEY values
 _invalid_key_strategy = st.one_of(
     # Empty string
-    st.just("OPENAI_API_KEY=\n"),
+    st.just("NVIDIA_API_KEY=\n"),
     # Placeholder value
-    st.just("OPENAI_API_KEY=your-openai-api-key-here\n"),
+    st.just("NVIDIA_API_KEY=your-nvidia-api-key-here\n"),
     # Whitespace-only value
     st.builds(
-        lambda ws: f"OPENAI_API_KEY={ws}\n",
+        lambda ws: f"NVIDIA_API_KEY={ws}\n",
         st.text(alphabet=" \t\n", min_size=1),
     ),
-    # Absent key — env content without OPENAI_API_KEY line at all
+    # Absent key — env content without NVIDIA_API_KEY line at all
     st.just("OTHER_KEY=value\n"),
 )
 
 
 @given(_invalid_key_strategy)
 @settings(max_examples=100)
-def test_env_guard_rejects_invalid_openai_key(env_content):
+def test_env_guard_rejects_invalid_nvidia_key(env_content):
     """
-    check_env_key must return passed=False for all invalid OPENAI_API_KEY states:
+    check_env_key must return passed=False for all invalid NVIDIA_API_KEY states:
     empty, placeholder, whitespace-only, or absent.
-    Feature: project-init, Property 4: Env guard rejects all invalid OPENAI_API_KEY states
+    Feature: project-init, Property 4: Env guard rejects all invalid NVIDIA_API_KEY states
     """
-    result = check_env_key(env_content, "OPENAI_API_KEY", "your-openai-api-key-here")
+    result = check_env_key(env_content, "NVIDIA_API_KEY", "your-nvidia-api-key-here")
     assert result.passed is False, (
         f"Expected passed=False for env_content={env_content!r}, got passed={result.passed}"
     )
-    assert "OPENAI_API_KEY" in result.output, (
-        f"Expected 'OPENAI_API_KEY' in output for env_content={env_content!r}. "
+    assert "NVIDIA_API_KEY" in result.output, (
+        f"Expected 'NVIDIA_API_KEY' in output for env_content={env_content!r}. "
         f"Got output: {result.output!r}"
     )
 

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Neural Networks Opening</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden}
+  body{background:#0f0f0f;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#fff}
+  #stage{position:relative;width:1920px;height:1080px;overflow:hidden}
+  .title{font-size:120px;font-weight:700;letter-spacing:-2px;line-height:1}
+  .subtitle{font-size:48px;font-weight:300;color:#5ee7df}
+  .pulse{position:absolute;top:50%;left:-200px;width:200px;height:200px;border-radius:50%;background:radial-gradient(circle,#5ee7df 0%,rgba(94,231,223,0) 70%);transform:translateY(-50%) scale(0);opacity:0}
+  .lower-third{position:absolute;left:0;bottom:0;width:100%;height:120px;background:linear-gradient(90deg,rgba(0,0,0,.6) 0%,rgba(0,0,0,.4) 100%);display:flex;align-items:center;padding:0 60px;font-size:32px;font-weight:400;color:#ffffffcc}
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+</head>
+<body>
+<div id="stage">
+  <div id="title" class="clip title" data-start="0.0" data-duration="3.0" data-track-index="1"
+       style="position:absolute;top:calc(50% - 60px);left:-1000px;white-space:nowrap;">Neural Networks</div>
+
+  <div id="subtitle" class="clip subtitle" data-start="0.8" data-duration="2.2" data-track-index="2"
+       style="position:absolute;top:calc(50% + 80px);left:-1000px;white-space:nowrap;">How Machines Learn Patterns</div>
+
+  <div class="clip pulse" data-start="0.0" data-duration="3.0" data-track-index="3"></div>
+  <div class="clip pulse" data-start="0.3" data-duration="2.7" data-track-index="4"></div>
+  <div class="clip pulse" data-start="0.6" data-duration="2.4" data-track-index="5"></div>
+  <div class="clip pulse" data-start="0.9" data-duration="2.1" data-track-index="6"></div>
+
+  <div id="lower" class="clip lower-third" data-start="0.0" data-duration="5.0" data-track-index="7"
+       style="opacity:0">Hi! In the next minute and a half we’ll unpack how neural networks learn.</div>
+</div>
+
+<script>
+const tl = gsap.timeline();
+window.__timelines = window.__timelines || [];
+window.__timelines.push(tl);
+
+// Title slide-in
+tl.to("#title", {
+  left: 240,
+  duration: 1.2,
+  ease: "power3.out"
+}, 0);
+
+// Subtitle slide-in & fade
+tl.to("#subtitle", {
+  left: 240,
+  opacity: 1,
+  duration: 1,
+  ease: "power2.out"
+}, 0.8);
+
+// Horizontal pulse train
+tl.to(".pulse", {
+  x: 2400,
+  scale: 1.8,
+  opacity: 1,
+  duration: 1.8,
+  stagger: 0.3,
+  ease: "power1.inOut"
+}, 0);
+
+tl.to(".pulse", {
+  opacity: 0,
+  duration: 0.6,
+  stagger: 0.3,
+  ease: "power2.in"
+}, 1.2);
+
+// Lower third fade-in
+tl.to("#lower", {
+  opacity: 1,
+  duration: 0.6,
+  ease: "power2.out"
+}, 0);
+</script>
+</body>
+</html>

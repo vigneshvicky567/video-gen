@@ -1,84 +1,87 @@
-from fastapi import FastAPI
+from __future__ import annotations
+
+import logging
+import os
+import subprocess
+import time
+import uuid
+from pathlib import Path
+from typing import Optional, Tuple
+
+from fastapi import FastAPI, HTTPException
+
+from shared.config import settings
 from shared.schemas.requests import VoiceoverRequest
 from shared.schemas.responses import VoiceoverResponse
-from shared.config import settings
-from shared.llm_client import get_openai_tts_client
-import os
-import logging
-import subprocess
-import uuid
-import time
 
-# LangSmith Tracing
 app = FastAPI(title="Voiceover Service")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# LangSmith tracer setup
 _tracer = None
 if os.getenv("LANGSMITH_API_KEY"):
     try:
         import langsmith
-        langsmith_client = langsmith.Client()
-        _tracer = langsmith_client
+
+        _tracer = langsmith.Client()
         logger.info("LangSmith tracing enabled")
     except ImportError:
         logger.warning("langsmith not installed, tracing disabled")
 
-# OpenAI client for TTS only (NVIDIA NIM has no TTS endpoint)
-client = get_openai_tts_client()
+_kokoro = None
 
 
-def generate_openai_tts(text: str, output_path: str, model: str = None) -> bool:
-    """Generate TTS using OpenAI. Returns True if successful."""
-    if model is None:
-        model = settings.VOICEOVER_MODEL
+def _validate_audio(path: str) -> Tuple[bool, str]:
+    audio_path = Path(path)
+    if not audio_path.exists():
+        return False, f"audio file missing: {path}"
+    if audio_path.stat().st_size == 0:
+        return False, f"audio file empty: {path}"
 
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type,duration",
+            "-of",
+            "default=noprint_wrappers=1",
+            path,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return False, f"ffprobe failed for {path}: {result.stderr.strip()}"
+    if "codec_type=audio" not in result.stdout:
+        return False, f"ffprobe found no audio stream in {path}"
+    return True, ""
+
+
+def _cuda_available() -> bool:
     try:
-        logger.info(f"Generating TTS with model: {model}")
-        response = client.audio.speech.create(
-            model=model,
-            voice="alloy",
-            input=text
-        )
-        with open(output_path, "wb") as f:
-            f.write(response.content)
-        logger.info(f"Successfully generated OpenAI TTS audio with {model}")
-        return True
-    except Exception as e:
-        logger.warning(f"OpenAI TTS failed with {model}: {str(e)}")
+        import torch
+
+        return bool(torch.cuda.is_available())
+    except Exception as exc:
+        logger.warning(f"Could not check CUDA availability: {exc}")
         return False
 
 
-def generate_dia2_tts(text: str, output_path: str) -> bool:
-    """Generate TTS using Dia2 (nari-labs/Dia2-1B or Dia2-2B).
+def generate_dia2_tts(text: str, output_path: str) -> Tuple[bool, str]:
+    device = settings.DIA2_DEVICE.lower()
+    if device == "cuda" and not _cuda_available():
+        return False, "Dia2 configured for CUDA, but no CUDA device is available"
 
-    Dia2 is a streaming dialogue TTS model that runs locally.
-    Weights are auto-downloaded on first use from Hugging Face.
-
-    Requires: pip install dia2  (installed in the voiceover Docker image)
-    VRAM: ~4GB for 1B, ~6GB for 2B — fits comfortably in 8GB VRAM.
-
-    Speaker tags [S1] / [S2] are supported for multi-speaker output.
-    Single-speaker narration is wrapped in [S1] automatically.
-
-    Returns True on success, False on any failure.
-    """
     try:
         from dia2 import Dia2, GenerationConfig, SamplingConfig
-    except ImportError:
-        logger.warning("dia2 not installed — skipping Dia2 TTS")
-        return False
+    except Exception as exc:
+        return False, f"Dia2 import failed: {exc}"
 
     try:
-        model_repo = settings.DIA2_MODEL  # e.g. "nari-labs/Dia2-1B"
-        device = settings.DIA2_DEVICE     # "cuda" or "cpu"
-        dtype = settings.DIA2_DTYPE       # "bfloat16" or "float32"
-
-        logger.info(f"Dia2: loading model {model_repo} on {device} ({dtype})")
-
-        dia = Dia2.from_repo(model_repo, device=device, dtype=dtype)
-
+        logger.info(f"Dia2: loading {settings.DIA2_MODEL} on {device} ({settings.DIA2_DTYPE})")
+        dia = Dia2.from_repo(settings.DIA2_MODEL, device=device, dtype=settings.DIA2_DTYPE)
         config = GenerationConfig(
             cfg_scale=float(settings.DIA2_CFG_SCALE),
             audio=SamplingConfig(
@@ -87,33 +90,80 @@ def generate_dia2_tts(text: str, output_path: str) -> bool:
             ),
             use_cuda_graph=(device == "cuda"),
         )
-
-        # Wrap plain narration text in [S1] speaker tag if not already tagged
         tagged_text = text if text.strip().startswith("[S") else f"[S1] {text}"
-
-        logger.info(f"Dia2: generating audio for {len(tagged_text)} chars")
         dia.generate(tagged_text, config=config, output_wav=output_path, verbose=False)
-
-        logger.info(f"Dia2: audio written to {output_path}")
-        return True
-
-    except Exception as e:
-        logger.warning(f"Dia2 TTS failed: {e}")
-        return False
+        ok, reason = _validate_audio(output_path)
+        return ok, reason
+    except Exception as exc:
+        return False, f"Dia2 generation failed: {exc}"
 
 
-def generate_espeak_fallback(text: str, output_path: str):
-    """Fallback to espeak (last resort)."""
-    logger.warning("Using espeak fallback for TTS")
+def _get_kokoro():
+    global _kokoro
+    if _kokoro is None:
+        from kokoro_onnx import Kokoro
+
+        model_path = Path(settings.KOKORO_MODEL_PATH)
+        voices_path = Path(settings.KOKORO_VOICES_PATH)
+        if not model_path.exists():
+            raise FileNotFoundError(f"Kokoro model missing: {model_path}")
+        if not voices_path.exists():
+            raise FileNotFoundError(f"Kokoro voices missing: {voices_path}")
+
+        logger.info(f"Kokoro: loading model {model_path}")
+        _kokoro = Kokoro(str(model_path), str(voices_path))
+    return _kokoro
+
+
+def generate_kokoro_tts(text: str, output_path: str) -> Tuple[bool, str]:
+    try:
+        import soundfile as sf
+
+        kokoro = _get_kokoro()
+        samples, sample_rate = kokoro.create(
+            text,
+            voice=settings.KOKORO_VOICE,
+            speed=float(settings.KOKORO_SPEED),
+            lang=settings.KOKORO_LANG,
+        )
+        sf.write(output_path, samples, sample_rate)
+        ok, reason = _validate_audio(output_path)
+        return ok, reason
+    except Exception as exc:
+        return False, f"Kokoro generation failed: {exc}"
+
+
+def generate_espeak_fallback(text: str, output_path: str) -> Tuple[bool, str]:
     try:
         subprocess.run(
             ["espeak", "-w", output_path, text],
             check=True,
-            capture_output=True
+            capture_output=True,
+            text=True,
         )
-    except Exception as e:
-        logger.error(f"Espeak fallback failed: {e}")
-        raise e
+        ok, reason = _validate_audio(output_path)
+        return ok, reason
+    except Exception as exc:
+        return False, f"espeak generation failed: {exc}"
+
+
+def _provider_output_path(temp_dir: Path, scene_id: int, provider: str) -> str:
+    suffix = "wav"
+    return str(temp_dir / f"scene_{scene_id}_audio.{suffix}")
+
+
+def _try_provider(provider: str, text: str, temp_dir: Path, scene_id: int) -> Tuple[bool, str, str]:
+    output_path = _provider_output_path(temp_dir, scene_id, provider)
+    normalized = provider.lower()
+    if normalized == "dia2":
+        ok, warning = generate_dia2_tts(text, output_path)
+    elif normalized == "kokoro":
+        ok, warning = generate_kokoro_tts(text, output_path)
+    elif normalized == "espeak" and settings.ALLOW_ESPEAK_FALLBACK:
+        ok, warning = generate_espeak_fallback(text, output_path)
+    else:
+        ok, warning = False, f"Unsupported or disabled voiceover provider: {provider}"
+    return ok, output_path, warning
 
 
 @app.post("/generate", response_model=VoiceoverResponse)
@@ -122,79 +172,99 @@ async def generate_voiceover(request: VoiceoverRequest):
 
     run_id = str(uuid.uuid4())
     start_time = time.time()
-    provider = settings.VOICEOVER_PROVIDER.lower()
+    primary = settings.VOICEOVER_PROVIDER.lower()
+    fallback = settings.VOICEOVER_FALLBACK_PROVIDER.lower()
 
     if _tracer:
         try:
             _tracer.create_run(
                 name="voiceover.generate",
-                run_type="llm",
+                run_type="chain",
                 run_id=run_id,
                 metadata={
                     "service": "voiceover",
                     "job_id": request.job_id,
                     "scene_id": request.scene_id,
-                    "provider": provider,
-                    "model": settings.VOICEOVER_MODEL,
-                }
-            )
-        except Exception as e:
-            logger.debug(f"LangSmith trace start failed: {e}")
-
-    temp_dir = os.path.join(settings.WORKSPACE_DIR, "temp", request.job_id)
-    os.makedirs(temp_dir, exist_ok=True)
-
-    tts_start = time.time()
-    success = False
-
-    if provider == "dia2":
-        # Dia2 local inference — output is wav
-        audio_path = os.path.join(temp_dir, f"scene_{request.scene_id}_audio.wav")
-        success = generate_dia2_tts(request.narration_text, audio_path)
-        if not success:
-            logger.warning("Dia2 TTS failed, falling back to OpenAI TTS")
-            audio_path = os.path.join(temp_dir, f"scene_{request.scene_id}_audio.mp3")
-            success = generate_openai_tts(request.narration_text, audio_path, settings.VOICEOVER_MODEL)
-    else:
-        # Default: OpenAI TTS
-        audio_path = os.path.join(temp_dir, f"scene_{request.scene_id}_audio.mp3")
-        success = generate_openai_tts(request.narration_text, audio_path, settings.VOICEOVER_MODEL)
-
-    tts_duration = time.time() - tts_start
-
-    if _tracer:
-        try:
-            _tracer.update_run(
-                run_id=run_id,
-                inputs={"text_length": len(request.narration_text)},
-                outputs={"success": success, "provider": provider},
-                metrics={"latency": tts_duration}
+                    "primary_provider": primary,
+                    "fallback_provider": fallback,
+                },
             )
         except Exception:
             pass
 
-    if not success:
-        logger.warning("All TTS providers failed, falling back to espeak")
-        audio_path = os.path.join(temp_dir, f"scene_{request.scene_id}_audio.wav")
-        generate_espeak_fallback(request.narration_text, audio_path)
+    temp_dir = Path(settings.WORKSPACE_DIR) / "temp" / request.job_id
+    temp_dir.mkdir(parents=True, exist_ok=True)
 
-    total_duration = time.time() - start_time
+    attempted = []
+    for provider in (primary, fallback):
+        if provider in attempted:
+            continue
+        attempted.append(provider)
+        ok, audio_path, warning = _try_provider(
+            provider,
+            request.narration_text,
+            temp_dir,
+            request.scene_id,
+        )
+        if ok:
+            fallback_used = provider != primary
+            if warning:
+                logger.warning(warning)
+            logger.info(f"Voiceover scene {request.scene_id} produced by {provider}: {audio_path}")
+            if _tracer:
+                try:
+                    _tracer.update_run(
+                        run_id=run_id,
+                        outputs={
+                            "audio_path": audio_path,
+                            "provider_used": provider,
+                            "fallback_used": fallback_used,
+                        },
+                        end_time=time.time(),
+                        metrics={"total_latency": time.time() - start_time},
+                    )
+                except Exception:
+                    pass
+            return VoiceoverResponse(
+                scene_id=request.scene_id,
+                audio_path=audio_path,
+                provider_used=provider,
+                fallback_used=fallback_used,
+                warning=warning or None,
+            )
 
+        logger.warning(f"{provider} voiceover failed for scene {request.scene_id}: {warning}")
+
+    if settings.ALLOW_ESPEAK_FALLBACK and "espeak" not in attempted:
+        ok, audio_path, warning = _try_provider(
+            "espeak",
+            request.narration_text,
+            temp_dir,
+            request.scene_id,
+        )
+        if ok:
+            logger.warning(f"Emergency espeak fallback used for scene {request.scene_id}")
+            return VoiceoverResponse(
+                scene_id=request.scene_id,
+                audio_path=audio_path,
+                provider_used="espeak",
+                fallback_used=True,
+                warning="Emergency espeak fallback used",
+            )
+        logger.warning(warning)
+
+    message = f"Voiceover failed. Attempted providers: {', '.join(attempted)}"
     if _tracer:
         try:
             _tracer.update_run(
                 run_id=run_id,
-                outputs={"audio_path": audio_path},
+                error=message,
                 end_time=time.time(),
-                metrics={"total_latency": total_duration}
+                metrics={"total_latency": time.time() - start_time},
             )
         except Exception:
             pass
-
-    return VoiceoverResponse(
-        scene_id=request.scene_id,
-        audio_path=audio_path
-    )
+    raise HTTPException(status_code=500, detail=message)
 
 
 @app.get("/health")

@@ -98,9 +98,16 @@ def test_validate_composition_with_existing_files():
         <!DOCTYPE html>
         <html>
         <body>
-            <video class="clip" data-start="0" data-duration="5" data-track-index="1" src="{video_path}" muted></video>
-            <audio class="clip" data-start="0" data-duration="5" data-track-index="2" src="{audio_path}"></audio>
-            <img class="clip" data-start="0" data-duration="5" data-track-index="3" src="{image_path}">
+            <div id="composition" data-composition-id="main" data-start="0" data-duration="5" data-width="1920" data-height="1080">
+                <video id="video-1" class="clip" data-start="0" data-duration="5" data-track-index="1" src="{video_path}" muted playsinline></video>
+                <audio id="audio-1" class="clip" data-start="0" data-duration="5" data-track-index="2" src="{audio_path}"></audio>
+                <img id="image-1" class="clip" data-start="0" data-duration="5" data-track-index="3" src="{image_path}">
+            </div>
+            <script>
+                const tl = gsap.timeline({{ paused: true }});
+                window.__timelines = window.__timelines || {{}};
+                window.__timelines["main"] = tl;
+            </script>
         </body>
         </html>
         """

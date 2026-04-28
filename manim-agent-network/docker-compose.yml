@@ -17,7 +17,6 @@ services:
       - ./workspace:/workspace
     environment:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
       - SCRIPT_WRITER_URL=http://script-writer:8001
       - CODE_GENERATOR_URL=http://code-generator:8002
@@ -87,14 +86,20 @@ services:
     volumes:
       - ./workspace:/workspace
     environment:
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
-      - VOICEOVER_PROVIDER=${VOICEOVER_PROVIDER:-openai}
+      - VOICEOVER_PROVIDER=${VOICEOVER_PROVIDER:-dia2}
+      - VOICEOVER_FALLBACK_PROVIDER=${VOICEOVER_FALLBACK_PROVIDER:-kokoro}
+      - ALLOW_ESPEAK_FALLBACK=${ALLOW_ESPEAK_FALLBACK:-false}
       - DIA2_MODEL=${DIA2_MODEL:-nari-labs/Dia2-1B}
       - DIA2_DEVICE=${DIA2_DEVICE:-cuda}
       - DIA2_DTYPE=${DIA2_DTYPE:-bfloat16}
       - DIA2_CFG_SCALE=${DIA2_CFG_SCALE:-2.0}
       - DIA2_TEMPERATURE=${DIA2_TEMPERATURE:-0.8}
+      - KOKORO_MODEL_PATH=${KOKORO_MODEL_PATH:-/models/kokoro/kokoro-v1.0.int8.onnx}
+      - KOKORO_VOICES_PATH=${KOKORO_VOICES_PATH:-/models/kokoro/voices-v1.0.bin}
+      - KOKORO_VOICE=${KOKORO_VOICE:-af_sarah}
+      - KOKORO_SPEED=${KOKORO_SPEED:-1.0}
+      - KOKORO_LANG=${KOKORO_LANG:-en-us}
     depends_on:
       - base
 
@@ -108,7 +113,6 @@ services:
       - ./workspace:/workspace
     environment:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
       - PEXELS_API_KEY=${PEXELS_API_KEY}
     depends_on:
       - base

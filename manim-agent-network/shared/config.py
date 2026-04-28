@@ -3,15 +3,12 @@ import os
 
 
 class Settings(BaseSettings):
-    # ── NVIDIA NIM (DeepSeek) ─────────────────────────────────────────────────
+    # ── NVIDIA NIM ───────────────────────────────────────────────────────────
     # All LLM calls (script writing, code generation, composition, keywords)
-    # are routed through NVIDIA's OpenAI-compatible NIM endpoint.
+    # are routed through NVIDIA's chat endpoint.
     NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
     NVIDIA_BASE_URL: str = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
-
-    # ── OpenAI ────────────────────────────────────────────────────────────────
-    # Still used for TTS (tts-1-hd) — NVIDIA NIM has no TTS endpoint.
-    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    NVIDIA_TIMEOUT_SECONDS: int = int(os.getenv("NVIDIA_TIMEOUT_SECONDS", "120"))
 
     WORKSPACE_DIR: str = "/workspace"
 
@@ -21,8 +18,9 @@ class Settings(BaseSettings):
     COMPOSITOR_LLM_MODEL: str = os.getenv("COMPOSITOR_LLM_MODEL", "moonshotai/kimi-k2-instruct")
 
     # ── TTS ───────────────────────────────────────────────────────────────────
-    VOICEOVER_MODEL: str = os.getenv("VOICEOVER_MODEL", "tts-1-hd")
-    VOICEOVER_PROVIDER: str = os.getenv("VOICEOVER_PROVIDER", "openai")  # openai | dia2 | coqui
+    VOICEOVER_PROVIDER: str = os.getenv("VOICEOVER_PROVIDER", "dia2")  # dia2 | kokoro
+    VOICEOVER_FALLBACK_PROVIDER: str = os.getenv("VOICEOVER_FALLBACK_PROVIDER", "kokoro")
+    ALLOW_ESPEAK_FALLBACK: bool = os.getenv("ALLOW_ESPEAK_FALLBACK", "false").lower() == "true"
 
     # Dia2 local TTS (nari-labs/Dia2-1B fits in ~4GB VRAM)
     DIA2_MODEL: str = os.getenv("DIA2_MODEL", "nari-labs/Dia2-1B")
@@ -31,12 +29,14 @@ class Settings(BaseSettings):
     DIA2_CFG_SCALE: float = float(os.getenv("DIA2_CFG_SCALE", "2.0"))
     DIA2_TEMPERATURE: float = float(os.getenv("DIA2_TEMPERATURE", "0.8"))
 
-    # Coqui TTS
-    COQUI_MODEL: str = os.getenv("COQUI_MODEL", "xtts_v2")
-    COQUI_REFERENCE_VOICE: str = os.getenv("COQUI_REFERENCE_VOICE", "")
+    # Kokoro ONNX local fallback
+    KOKORO_MODEL_PATH: str = os.getenv("KOKORO_MODEL_PATH", "/models/kokoro/kokoro-v1.0.int8.onnx")
+    KOKORO_VOICES_PATH: str = os.getenv("KOKORO_VOICES_PATH", "/models/kokoro/voices-v1.0.bin")
+    KOKORO_VOICE: str = os.getenv("KOKORO_VOICE", "af_sarah")
+    KOKORO_SPEED: float = float(os.getenv("KOKORO_SPEED", "1.0"))
+    KOKORO_LANG: str = os.getenv("KOKORO_LANG", "en-us")
 
     # ── Timeouts ──────────────────────────────────────────────────────────────
-    OPENAI_TIMEOUT_SECONDS: int = int(os.getenv("OPENAI_TIMEOUT_SECONDS", "120"))
     SERVICE_HTTP_TIMEOUT_SECONDS: float = float(os.getenv("SERVICE_HTTP_TIMEOUT_SECONDS", "900"))
 
     # ── Service URLs (Docker internal) ────────────────────────────────────────

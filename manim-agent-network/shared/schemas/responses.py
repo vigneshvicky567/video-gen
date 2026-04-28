@@ -18,6 +18,9 @@ class ValidatorResponse(BaseModel):
 class VoiceoverResponse(BaseModel):
     scene_id: int
     audio_path: str
+    provider_used: Optional[str] = None
+    fallback_used: bool = False
+    warning: Optional[str] = None
 
 class AssemblerResponse(BaseModel):
     final_output_path: str

@@ -1,33 +1,60 @@
-"""
-Shared LLM client factory.
+"""Shared NVIDIA NIM chat client factory."""
 
-All LLM calls in this project are routed through NVIDIA's OpenAI-compatible
-NIM endpoint using DeepSeek models.
+from __future__ import annotations
 
-Usage:
-    from shared.llm_client import get_llm_client
-    client = get_llm_client()
-    response = client.chat.completions.create(model=settings.SCRIPT_WRITER_MODEL, ...)
-"""
+from types import SimpleNamespace
+from typing import Any
 
-from openai import OpenAI
+import httpx
+
 from shared.config import settings
 
 
-def get_llm_client() -> OpenAI:
-    """Return an OpenAI client pointed at NVIDIA NIM."""
-    return OpenAI(
-        base_url=settings.NVIDIA_BASE_URL,
-        api_key=settings.NVIDIA_API_KEY,
-    )
+class _NimCompletions:
+    def create(self, **kwargs: Any) -> SimpleNamespace:
+        payload = {key: value for key, value in kwargs.items() if value is not None}
+        url = f"{settings.NVIDIA_BASE_URL.rstrip('/')}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {settings.NVIDIA_API_KEY}",
+            "Content-Type": "application/json",
+        }
+
+        with httpx.Client(timeout=settings.NVIDIA_TIMEOUT_SECONDS) as client:
+            response = client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+
+        choices = []
+        for choice in data.get("choices", []):
+            message = choice.get("message") or {}
+            choices.append(
+                SimpleNamespace(
+                    message=SimpleNamespace(content=message.get("content")),
+                    finish_reason=choice.get("finish_reason"),
+                    index=choice.get("index"),
+                )
+            )
+
+        return SimpleNamespace(
+            id=data.get("id"),
+            model=data.get("model"),
+            choices=choices,
+            usage=data.get("usage"),
+            raw=data,
+        )
 
 
-def get_openai_tts_client() -> OpenAI:
-    """Return a standard OpenAI client for TTS (tts-1-hd).
+class _NimChat:
+    def __init__(self) -> None:
+        self.completions = _NimCompletions()
 
-    NVIDIA NIM has no TTS endpoint, so voiceover still uses OpenAI directly.
-    """
-    return OpenAI(
-        api_key=settings.OPENAI_API_KEY,
-        timeout=settings.OPENAI_TIMEOUT_SECONDS,
-    )
+
+class NimClient:
+    """Small compatibility wrapper for existing chat completion call sites."""
+
+    def __init__(self) -> None:
+        self.chat = _NimChat()
+
+
+def get_llm_client() -> NimClient:
+    return NimClient()
