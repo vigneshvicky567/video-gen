@@ -99,7 +99,7 @@ def compose_html(
         data-duration="{video_duration}"
         data-track-index="{track}"
         src="{rel_render}"
-        style="position:absolute;left:320px;top:180px;width:1280px;height:720px;object-fit:contain;z-index:{track};"
+        style="position:absolute;left:0;top:0;width:1920px;height:1080px;object-fit:cover;z-index:{track};"
         muted
         playsinline></video>"""
             )

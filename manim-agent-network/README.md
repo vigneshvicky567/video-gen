@@ -23,7 +23,7 @@ Topic → Script Writer → Code Generator → Validator → Voiceover → Assem
 
 - **🤖 Multi-Agent Orchestration** — 6 independent microservices powered by LangGraph
 - **🎬 Manim CE Integration** — Generate stunning mathematical animations
-- **🔊 Local Voiceover** — Dia2 first, Kokoro ONNX fallback, optional espeak smoke-test fallback
+- **🔊 Local Voiceover** — Kokoro ONNX (CPU, offline), espeak emergency fallback
 - **♻️ Self-Healing** — Automatic retry with error feedback for failed renders
 - **🐳 Docker-Ready** — Full containerization with docker-compose
 
@@ -41,8 +41,8 @@ Topic → Script Writer → Code Generator → Validator → Voiceover → Assem
 │        │                  │                  │                  │          │
 │        ▼                  ▼                  ▼                  ▼          │
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐  │
-│  │ NVIDIA NIM  │    │ NVIDIA NIM  │    │  manim      │    │   Dia2 /    │  │
-│  │   (Script)  │    │   (Code)    │    │  render     │    │   Kokoro    │  │
+│  │ NVIDIA NIM  │    │ NVIDIA NIM  │    │  manim      │    │  Kokoro     │  │
+│  │   (Script)  │    │   (Code)    │    │  render     │    │   ONNX TTS  │  │
 │  └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘  │
 │                                                                     │        │
 │                                                                     ▼        │
@@ -61,7 +61,7 @@ Topic → Script Writer → Code Generator → Validator → Voiceover → Assem
 | **Script Writer** | 8001 | Generate narrative & scene plans with NVIDIA NIM |
 | **Code Generator** | 8002 | Generate Manim CE Python/HyperFrames code with NVIDIA NIM |
 | **Validator** | 8003 | Execute `manim render`, capture errors |
-| **Voiceover** | 8004 | Generate local narration audio (Dia2/Kokoro) |
+| **Voiceover** | 8004 | Generate local narration audio (Kokoro ONNX) |
 | **Assembler** | 8005 | Merge video + audio into final .mp4 |
 
 ---
@@ -129,28 +129,22 @@ workspace/outputs/<job_id>_final.mp4
 | `NVIDIA_API_KEY` | - | **Required** - Your NVIDIA NIM API key |
 | `SCRIPT_WRITER_MODEL` | `moonshotai/kimi-k2-instruct` | Model for script generation |
 | `CODE_GENERATOR_MODEL` | `moonshotai/kimi-k2-instruct` | Model for code generation |
-| `VOICEOVER_PROVIDER` | `dia2` | Primary local TTS provider: `dia2` or `kokoro` |
-| `VOICEOVER_FALLBACK_PROVIDER` | `kokoro` | Offline fallback provider |
+| `VOICEOVER_PROVIDER` | `kokoro` | TTS provider: `kokoro` or `espeak` |
+| `VOICEOVER_FALLBACK_PROVIDER` | `espeak` | Emergency fallback provider |
 | `KOKORO_VOICE` | `af_sarah` | Kokoro narrator voice |
 
 ### Voiceover Providers
 
-#### Dia2 TTS (Primary)
-Uses local Dia2 when the configured device is available:
+#### Kokoro ONNX (Primary, CPU-capable, offline)
+Preinstalled in the Docker image, no GPU needed:
 
 ```env
-VOICEOVER_PROVIDER=dia2
-DIA2_MODEL=nari-labs/Dia2-1B
-DIA2_DEVICE=cuda
-```
-
-#### Kokoro ONNX (Fallback)
-Kokoro is preloaded in the voiceover image and works offline on CPU:
-
-```env
-VOICEOVER_FALLBACK_PROVIDER=kokoro
+VOICEOVER_PROVIDER=kokoro
 KOKORO_VOICE=af_sarah
 ```
+
+#### espeak (Emergency fallback)
+Robotic voice, only used when Kokoro fails and `ALLOW_ESPEAK_FALLBACK=true`.
 
 ---
 
@@ -178,7 +172,7 @@ manim-agent-network/
 │   ├── script-writer/          # NVIDIA NIM-powered script generation
 │   ├── code-generator          # Manim CE code generation
 │   ├── validator/              # Render validation & error capture
-│   ├── voiceover/              # Local TTS (Dia2/Kokoro)
+│   ├── voiceover/              # Local TTS (Kokoro ONNX)
 │   └── assembler/              # FFmpeg video assembly
 │
 ├── shared/                     # Common code across services
@@ -227,8 +221,11 @@ make logs | grep -i error
 
 ### TTS Issues
 
-- **Dia2**: Ensure the configured CUDA device is available, or set `VOICEOVER_PROVIDER=kokoro`
-- **Kokoro**: Rebuild the voiceover image if `/models/kokoro` assets are missing
+- **Kokoro**: Rebuild the voiceover image if `/models/kokoro` assets are missing:
+  ```bash
+  docker compose build voiceover
+  docker compose up -d voiceover
+  ```
 
 ### Out of Memory
 
@@ -251,5 +248,4 @@ MIT License - See [LICENSE](LICENSE) for details.
 - [Manim Community Edition](https://manim.community/) - Beautiful math animations
 - [LangGraph](https://langchain-ai.github.io/langgraph/) - Agent orchestration
 - [NVIDIA NIM](https://build.nvidia.com/) - LLM inference for the agents
-- [Dia2](https://github.com/nari-labs/dia2) - Local dialogue TTS
-- [Kokoro ONNX](https://github.com/thewh1teagle/kokoro-onnx) - Lightweight offline TTS fallback
+- [Kokoro ONNX](https://github.com/thewh1teagle/kokoro-onnx) - Lightweight offline TTS

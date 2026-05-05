@@ -9,6 +9,7 @@ Validates: Requirements 2.1
 
 import json
 import logging
+import re
 from typing import List
 
 from shared.config import settings
@@ -32,6 +33,20 @@ Visual description: {visual_description}
 
 Return only a JSON array of keywords."""
 
+STOP_WORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
+    "if", "in", "into", "is", "it", "its", "no", "not", "of", "on", "or",
+    "such", "that", "the", "their", "then", "there", "these", "they", "this",
+    "to", "was", "were", "will", "with",
+    # Common sentence starters and connectors that slip through
+    "when", "where", "who", "what", "why", "how", "every", "all", "some",
+    "each", "few", "many", "most", "other", "another", "both", "either",
+    "neither", "much", "more", "less", "very", "just", "only",
+    "now", "here", "so", "than", "too", "can", "could", "should", "would",
+    "may", "might", "must", "shall", "do", "does", "did", "has", "have",
+    "had", "been", "being", "am", "we", "you", "he", "she", "us", "them",
+}
+
 
 def extract_keywords(narration_text: str, visual_description: str) -> List[str]:
     """
@@ -40,7 +55,7 @@ def extract_keywords(narration_text: str, visual_description: str) -> List[str]:
     Makes a single NVIDIA chat completion call per scene. The system prompt
     instructs the model to return a JSON array of 1-5 keywords.
     
-    On JSON parse failure, falls back to first 3 whitespace-split tokens of narration_text.
+    On JSON parse failure, falls back to a filtered token list from narration_text.
     
     Args:
         narration_text: The narration text for the scene.
@@ -77,6 +92,7 @@ def extract_keywords(narration_text: str, visual_description: str) -> List[str]:
         
         # Parse the JSON response
         keywords = _parse_keywords_json(content)
+        keywords = _clean_keywords(keywords)
         
         if keywords:
             # Ensure we return 1-5 keywords
@@ -140,9 +156,24 @@ def _parse_keywords_json(content: str) -> List[str]:
     return [str(k).strip() for k in keywords if k]
 
 
+def _clean_keywords(keywords: List[str]) -> List[str]:
+    """Normalize and filter keywords for better search quality."""
+    cleaned: List[str] = []
+    seen: set[str] = set()
+    for kw in keywords:
+        token = str(kw).strip().lower()
+        if not token or token in STOP_WORDS or len(token) < 2:
+            continue
+        if token in seen:
+            continue
+        seen.add(token)
+        cleaned.append(token)
+    return cleaned
+
+
 def _fallback_tokenize(narration_text: str) -> List[str]:
     """
-    Fallback tokenizer that splits narration_text on whitespace and takes first 3 tokens.
+    Fallback tokenizer that filters narration_text into 1-5 useful keywords.
     
     Args:
         narration_text: The narration text to tokenize.
@@ -150,5 +181,7 @@ def _fallback_tokenize(narration_text: str) -> List[str]:
     Returns:
         A list of up to 3 tokens from the narration text.
     """
-    tokens = narration_text.split()
-    return tokens[:3] if tokens else ["image"]  # Ensure at least one keyword
+    tokens = re.split(r"\W+", narration_text.lower())
+    tokens = [t for t in tokens if t and t not in STOP_WORDS and len(t) >= 2]
+    tokens = _clean_keywords(tokens)
+    return tokens[:5] if tokens else ["image"]  # Ensure at least one keyword

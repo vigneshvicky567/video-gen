@@ -244,4 +244,4 @@ def test_assemble_output_file_missing(
         response = client.post("/assemble", json=request_data)
     
     assert response.status_code == 500
-    assert "does not exist" in response.json()["detail"]
+    assert "Output file missing after render" in response.json()["detail"]

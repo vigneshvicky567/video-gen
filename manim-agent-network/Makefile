@@ -1,4 +1,4 @@
-.PHONY: build run down logs
+.PHONY: build run down logs rebuild
 
 build:
 	docker-compose build
@@ -11,3 +11,7 @@ down:
 
 logs:
 	docker-compose logs -f
+
+rebuild:
+	docker-compose build --no-cache
+	docker-compose up -d --force-recreate

@@ -17,6 +17,18 @@ ENV NODE_PATH=/usr/local/lib/node_modules
 # Create symlink so `hyperframes` is directly callable as well
 RUN ln -sf /usr/local/lib/node_modules/hyperframes/bin/hyperframes.js /usr/local/bin/hyperframes 2>/dev/null || true
 
+# Install Chromium for HyperFrames rendering
+# HyperFrames needs a headless browser to render HTML to video frames
+RUN apt-get update && \
+    apt-get install -y \
+    chromium \
+    chromium-driver \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set environment variable to tell Puppeteer/HyperFrames where to find Chromium
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV CHROME_BIN=/usr/bin/chromium
+
 # ffmpeg/ffprobe are already present in base-manim-agent; ensure they are available
 RUN ffprobe -version > /dev/null 2>&1 || (apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*)
 

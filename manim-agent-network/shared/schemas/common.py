@@ -3,10 +3,11 @@ from typing import List, Optional, Dict, Any
 
 class ScenePlan(BaseModel):
     scene_id: int
+    title: Optional[str] = None          # Short scene title shown in the title bar
     narration_text: str
     visual_description: str
     estimated_duration_seconds: int
-    content_type: Optional[str] = None  # "text_ui" or "math_animation"
+    content_type: Optional[str] = None  # "hyperframes" or "manim"
 
 class ScriptResponse(BaseModel):
     title: str

@@ -12,11 +12,12 @@ services:
       context: .
       dockerfile: infrastructure/docker/Dockerfile.orchestrator
     ports:
-      - "8000:8000"
+      - "8010:8000"
     volumes:
       - ./workspace:/workspace
     environment:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
       - SCRIPT_WRITER_URL=http://script-writer:8001
       - CODE_GENERATOR_URL=http://code-generator:8002
@@ -24,7 +25,7 @@ services:
       - VOICEOVER_URL=http://voiceover:8004
       - ASSEMBLER_URL=http://compositor:8005
       - IMAGE_FETCHER_URL=http://image-fetcher:8006
-      - COMPOSITOR_LLM_MODEL=${COMPOSITOR_LLM_MODEL:-minimaxai/minimax-m2.7}
+      - COMPOSITOR_LLM_MODEL=${COMPOSITOR_LLM_MODEL:-moonshotai/kimi-k2-instruct}
     depends_on:
       - base
       - script-writer
@@ -44,8 +45,10 @@ services:
       - ./workspace:/workspace
     environment:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
       - SCRIPT_WRITER_MODEL=${SCRIPT_WRITER_MODEL:-moonshotai/kimi-k2-instruct}
+      - NVIDIA_RPM=${NVIDIA_RPM:-35}
     depends_on:
       - base
 
@@ -59,8 +62,10 @@ services:
       - ./workspace:/workspace
     environment:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
-      - CODE_GENERATOR_MODEL=${CODE_GENERATOR_MODEL:-moonshotai/kimi-k2-instruct}
+      - CODE_GENERATOR_MODEL=${CODE_GENERATOR_MODEL:-qwen/qwen3-coder-480b-a35b-instruct}
+      - NVIDIA_RPM=${NVIDIA_RPM:-35}
     depends_on:
       - base
 
@@ -87,14 +92,9 @@ services:
       - ./workspace:/workspace
     environment:
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
-      - VOICEOVER_PROVIDER=${VOICEOVER_PROVIDER:-dia2}
-      - VOICEOVER_FALLBACK_PROVIDER=${VOICEOVER_FALLBACK_PROVIDER:-kokoro}
-      - ALLOW_ESPEAK_FALLBACK=${ALLOW_ESPEAK_FALLBACK:-false}
-      - DIA2_MODEL=${DIA2_MODEL:-nari-labs/Dia2-1B}
-      - DIA2_DEVICE=${DIA2_DEVICE:-cuda}
-      - DIA2_DTYPE=${DIA2_DTYPE:-bfloat16}
-      - DIA2_CFG_SCALE=${DIA2_CFG_SCALE:-2.0}
-      - DIA2_TEMPERATURE=${DIA2_TEMPERATURE:-0.8}
+      - VOICEOVER_PROVIDER=${VOICEOVER_PROVIDER:-kokoro}
+      - VOICEOVER_FALLBACK_PROVIDER=${VOICEOVER_FALLBACK_PROVIDER:-espeak}
+      - ALLOW_ESPEAK_FALLBACK=${ALLOW_ESPEAK_FALLBACK:-true}
       - KOKORO_MODEL_PATH=${KOKORO_MODEL_PATH:-/models/kokoro/kokoro-v1.0.int8.onnx}
       - KOKORO_VOICES_PATH=${KOKORO_VOICES_PATH:-/models/kokoro/voices-v1.0.bin}
       - KOKORO_VOICE=${KOKORO_VOICE:-af_sarah}
@@ -113,7 +113,9 @@ services:
       - ./workspace:/workspace
     environment:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - PEXELS_API_KEY=${PEXELS_API_KEY}
+      - NVIDIA_RPM=${NVIDIA_RPM:-35}
     depends_on:
       - base
 
@@ -121,13 +123,14 @@ services:
     build:
       context: .
       dockerfile: infrastructure/docker/Dockerfile.compositor
-    ports:
-      - "8005:8005"
+    expose:
+      - "8005"
     volumes:
       - ./workspace:/workspace
     environment:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
-      - COMPOSITOR_LLM_MODEL=${COMPOSITOR_LLM_MODEL:-minimaxai/minimax-m2.7}
+      # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - COMPOSITOR_LLM_MODEL=${COMPOSITOR_LLM_MODEL:-moonshotai/kimi-k2-instruct}
     depends_on:
       - base
 

@@ -8,28 +8,28 @@ class Settings(BaseSettings):
     # are routed through NVIDIA's chat endpoint.
     NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
     NVIDIA_BASE_URL: str = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
-    NVIDIA_TIMEOUT_SECONDS: int = int(os.getenv("NVIDIA_TIMEOUT_SECONDS", "120"))
+    NVIDIA_TIMEOUT_SECONDS: int = int(os.getenv("NVIDIA_TIMEOUT_SECONDS", "300"))
+    NVIDIA_CONNECT_TIMEOUT_SECONDS: int = int(os.getenv("NVIDIA_CONNECT_TIMEOUT_SECONDS", "10"))
+    NVIDIA_READ_TIMEOUT_SECONDS: int = int(os.getenv("NVIDIA_READ_TIMEOUT_SECONDS", "180"))
+    NVIDIA_RPM: int = int(os.getenv("NVIDIA_RPM", "35"))  # requests per minute (stay under 40)
+
+    # ── Anthropic Claude API (commented out — Claude API expired, reverted to NVIDIA) ─
+    # ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+    # ANTHROPIC_RPM: int = int(os.getenv("ANTHROPIC_RPM", "50"))
 
     WORKSPACE_DIR: str = "/workspace"
 
     # ── LLM models (all via NVIDIA NIM) ──────────────────────────────────────
     SCRIPT_WRITER_MODEL: str = os.getenv("SCRIPT_WRITER_MODEL", "moonshotai/kimi-k2-instruct")
-    CODE_GENERATOR_MODEL: str = os.getenv("CODE_GENERATOR_MODEL", "moonshotai/kimi-k2-instruct")
+    CODE_GENERATOR_MODEL: str = os.getenv("CODE_GENERATOR_MODEL", "qwen/qwen3-coder-480b-a35b-instruct")
     COMPOSITOR_LLM_MODEL: str = os.getenv("COMPOSITOR_LLM_MODEL", "moonshotai/kimi-k2-instruct")
 
     # ── TTS ───────────────────────────────────────────────────────────────────
-    VOICEOVER_PROVIDER: str = os.getenv("VOICEOVER_PROVIDER", "dia2")  # dia2 | kokoro
-    VOICEOVER_FALLBACK_PROVIDER: str = os.getenv("VOICEOVER_FALLBACK_PROVIDER", "kokoro")
-    ALLOW_ESPEAK_FALLBACK: bool = os.getenv("ALLOW_ESPEAK_FALLBACK", "false").lower() == "true"
+    VOICEOVER_PROVIDER: str = os.getenv("VOICEOVER_PROVIDER", "kokoro")  # kokoro | espeak
+    VOICEOVER_FALLBACK_PROVIDER: str = os.getenv("VOICEOVER_FALLBACK_PROVIDER", "espeak")
+    ALLOW_ESPEAK_FALLBACK: bool = os.getenv("ALLOW_ESPEAK_FALLBACK", "true").lower() == "true"
 
-    # Dia2 local TTS (nari-labs/Dia2-1B fits in ~4GB VRAM)
-    DIA2_MODEL: str = os.getenv("DIA2_MODEL", "nari-labs/Dia2-1B")
-    DIA2_DEVICE: str = os.getenv("DIA2_DEVICE", "cuda")
-    DIA2_DTYPE: str = os.getenv("DIA2_DTYPE", "bfloat16")
-    DIA2_CFG_SCALE: float = float(os.getenv("DIA2_CFG_SCALE", "2.0"))
-    DIA2_TEMPERATURE: float = float(os.getenv("DIA2_TEMPERATURE", "0.8"))
-
-    # Kokoro ONNX local fallback
+    # Kokoro ONNX local TTS (CPU-capable, offline)
     KOKORO_MODEL_PATH: str = os.getenv("KOKORO_MODEL_PATH", "/models/kokoro/kokoro-v1.0.int8.onnx")
     KOKORO_VOICES_PATH: str = os.getenv("KOKORO_VOICES_PATH", "/models/kokoro/voices-v1.0.bin")
     KOKORO_VOICE: str = os.getenv("KOKORO_VOICE", "af_sarah")

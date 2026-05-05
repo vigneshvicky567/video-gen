@@ -1,28 +1,201 @@
-"""Shared NVIDIA NIM chat client factory."""
+"""Shared NVIDIA NIM chat client with async-safe rate limiting.
+
+Rate limit: configurable via NVIDIA_RPM (default 35 requests/minute).
+Uses asyncio.Semaphore to cap concurrent in-flight requests rather than
+serializing them with sleep — this avoids blocking the event loop and
+lets requests run as fast as the API allows up to the concurrency cap.
+
+The semaphore limits concurrent requests per process. With the default
+CODE_GENERATOR_WORKERS=1 (single uvicorn worker per container) and
+NVIDIA_RPM=35, we allow up to NIM_MAX_CONCURRENT=6 simultaneous requests
+which keeps us well under the 40 RPM limit while maximising parallelism.
+"""
+
+# ── Anthropic Claude implementation (commented out — Claude API expired, reverted to NVIDIA) ─
+# from __future__ import annotations
+# import anthropic
+#
+# class _ClaudeCompletions:
+#     def _do_request(self, payload: dict) -> SimpleNamespace:
+#         client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+#         model = payload.get("model", "claude-opus-4-7")
+#         messages_raw = payload.get("messages", [])
+#         max_tokens = payload.get("max_tokens", 16000)
+#         system_parts = [m["content"] for m in messages_raw if m["role"] == "system"]
+#         conv_messages = [m for m in messages_raw if m["role"] != "system"]
+#         response_format = payload.get("response_format", {})
+#         if isinstance(response_format, dict) and response_format.get("type") == "json_object":
+#             system_parts.append("IMPORTANT: Respond with valid JSON only.")
+#         system = "\n\n".join(system_parts) if system_parts else None
+#         kwargs = {"model": model, "max_tokens": max_tokens, "messages": conv_messages}
+#         if system:
+#             kwargs["system"] = system
+#         response = client.messages.create(**kwargs)
+#         text = next((b.text for b in response.content if b.type == "text"), "")
+#         return SimpleNamespace(
+#             id=response.id, model=response.model,
+#             choices=[SimpleNamespace(message=SimpleNamespace(content=text),
+#                                       finish_reason=response.stop_reason, index=0)],
+#             usage={"prompt_tokens": response.usage.input_tokens,
+#                    "completion_tokens": response.usage.output_tokens},
+#             raw=response,
+#         )
+# class ClaudeClient: ...
+# def get_llm_client() -> ClaudeClient: ...
+# ─────────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
 
+import asyncio
+import os
+import threading
+import time
 from types import SimpleNamespace
 from typing import Any
 
 import httpx
 
 from shared.config import settings
+from shared.log import get_logger
 
+_logger = get_logger(__name__)
+
+# ── Async concurrency limiter ─────────────────────────────────────────────────
+# Limits how many NIM requests are in-flight at once per process.
+# This is non-blocking (uses asyncio.Semaphore) so it never stalls the event loop.
+# Default: 6 concurrent → at ~10s per call that's ~36 RPM, safely under 40.
+_MAX_CONCURRENT: int = int(os.getenv("NIM_MAX_CONCURRENT", "6"))
+_sem: asyncio.Semaphore | None = None  # created lazily on first use (needs running loop)
+
+# Sync fallback for non-async callers (e.g. voiceover Kokoro thread)
+_RPM: int = int(os.getenv("NVIDIA_RPM", "35"))
+_MIN_INTERVAL: float = 60.0 / _RPM
+_rate_lock = threading.Lock()
+_last_request_time: float = 0.0
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    """Return (or create) the per-event-loop semaphore."""
+    global _sem
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return None  # not in async context
+    # Re-create if the loop changed (e.g. test teardown)
+    if _sem is None:
+        _sem = asyncio.Semaphore(_MAX_CONCURRENT)
+    return _sem
+
+
+def _acquire_rate_slot_sync() -> None:
+    """Blocking rate limiter for sync callers only."""
+    global _last_request_time
+    with _rate_lock:
+        now = time.monotonic()
+        wait = _MIN_INTERVAL - (now - _last_request_time)
+        if wait > 0:
+            _logger.debug("Rate limiter waiting (sync)", extra={"wait_s": round(wait, 3)})
+            time.sleep(wait)
+        _last_request_time = time.monotonic()
+
+
+# Keep old name as alias so any existing callers don't break
+_acquire_rate_slot = _acquire_rate_slot_sync
+
+
+# ── NIM completions ───────────────────────────────────────────────────────────
 
 class _NimCompletions:
-    def create(self, **kwargs: Any) -> SimpleNamespace:
-        payload = {key: value for key, value in kwargs.items() if value is not None}
+    def _do_request(self, payload: dict) -> SimpleNamespace:
+        """Execute one HTTP request to NIM (sync, blocking). Called from thread pool."""
         url = f"{settings.NVIDIA_BASE_URL.rstrip('/')}/chat/completions"
         headers = {
             "Authorization": f"Bearer {settings.NVIDIA_API_KEY}",
             "Content-Type": "application/json",
         }
+        model = payload.get("model", "?")
+        msgs = payload.get("messages", [])
+        prompt_chars = sum(len(m.get("content") or "") for m in msgs)
+        timeout = httpx.Timeout(
+            settings.NVIDIA_TIMEOUT_SECONDS,
+            connect=settings.NVIDIA_CONNECT_TIMEOUT_SECONDS,
+            read=settings.NVIDIA_READ_TIMEOUT_SECONDS,
+        )
 
-        with httpx.Client(timeout=settings.NVIDIA_TIMEOUT_SECONDS) as client:
-            response = client.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
+        _logger.debug("NIM request", extra={"model": model, "prompt_chars": prompt_chars,
+                                             "messages": len(msgs)})
+
+        t0 = time.perf_counter()
+        last_exc = None
+
+        for attempt in range(1, 4):  # up to 3 attempts
+            try:
+                with httpx.Client(timeout=timeout) as client:
+                    response = client.post(url, headers=headers, json=payload)
+                    response.raise_for_status()
+                    data = response.json()
+                break  # success
+
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code
+
+                if status_code == 429:
+                    retry_after = exc.response.headers.get("retry-after")
+                    wait = float(retry_after) if retry_after else attempt * 15
+                    _logger.warning("NIM rate limited (429), backing off",
+                                    extra={"model": model, "attempt": attempt,
+                                           "wait_s": wait, "retry_after": retry_after})
+                    time.sleep(wait)
+                    last_exc = exc
+                    continue
+
+                if status_code in (502, 503, 504) and attempt < 3:
+                    wait = attempt * 5
+                    _logger.warning("NIM server error, retrying",
+                                    extra={"model": model, "status": status_code,
+                                           "attempt": attempt, "wait_s": wait})
+                    time.sleep(wait)
+                    last_exc = exc
+                    continue
+
+                _logger.error("NIM HTTP error", extra={"model": model,
+                                                        "status": status_code,
+                                                        "body": exc.response.text[:400]})
+                raise
+
+            except httpx.ReadTimeout as exc:
+                if attempt < 3:
+                    wait = attempt * 5
+                    _logger.warning("NIM read timeout, retrying",
+                                    extra={"model": model, "attempt": attempt, "wait_s": wait})
+                    time.sleep(wait)
+                    last_exc = exc
+                    continue
+                raise
+
+            except httpx.RequestError as exc:
+                if attempt < 3:
+                    wait = attempt * 3
+                    _logger.warning("NIM request error, retrying",
+                                    extra={"model": model, "attempt": attempt,
+                                           "wait_s": wait, "error": str(exc)})
+                    time.sleep(wait)
+                    last_exc = exc
+                    continue
+                _logger.error("NIM request error", extra={"model": model, "error": str(exc)})
+                raise
+        else:
+            raise last_exc
+
+        elapsed = time.perf_counter() - t0
+        usage = data.get("usage") or {}
+        _logger.info("NIM response", extra={
+            "model": model,
+            "elapsed_s": round(elapsed, 3),
+            "prompt_tokens": usage.get("prompt_tokens"),
+            "completion_tokens": usage.get("completion_tokens"),
+            "finish_reason": (data.get("choices") or [{}])[0].get("finish_reason"),
+        })
 
         choices = []
         for choice in data.get("choices", []):
@@ -43,6 +216,27 @@ class _NimCompletions:
             raw=data,
         )
 
+    def create(self, **kwargs: Any) -> SimpleNamespace:
+        """Sync entry point — used by services that call from sync context."""
+        payload = {k: v for k, v in kwargs.items() if v is not None}
+        _acquire_rate_slot_sync()
+        return self._do_request(payload)
+
+    async def acreate(self, **kwargs: Any) -> SimpleNamespace:
+        """Async entry point — acquires semaphore then offloads HTTP to thread pool.
+
+        This never blocks the event loop: the semaphore limits concurrency and
+        asyncio.to_thread runs the blocking HTTP call in a worker thread.
+        """
+        payload = {k: v for k, v in kwargs.items() if v is not None}
+        sem = _get_semaphore()
+        if sem is not None:
+            async with sem:
+                return await asyncio.to_thread(self._do_request, payload)
+        else:
+            # Fallback: run in thread without semaphore
+            return await asyncio.to_thread(self._do_request, payload)
+
 
 class _NimChat:
     def __init__(self) -> None:
@@ -50,7 +244,7 @@ class _NimChat:
 
 
 class NimClient:
-    """Small compatibility wrapper for existing chat completion call sites."""
+    """Thin wrapper keeping the same interface as the OpenAI SDK client."""
 
     def __init__(self) -> None:
         self.chat = _NimChat()

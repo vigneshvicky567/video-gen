@@ -65,7 +65,7 @@ async def code_generator_node(state: LangGraphState):
         scenes_to_generate = [
             scene for scene in script["scenes"]
             if scene["scene_id"] not in render_paths
-            and retry_counts.get(scene["scene_id"], 0) < 3
+            and retry_counts.get(scene["scene_id"], 0) < 5
         ]
 
         if not scenes_to_generate:
@@ -129,7 +129,7 @@ async def validator_node(state: LangGraphState):
             (scene_id, code_path)
             for scene_id, code_path in state["code_paths"].items()
             if scene_id not in new_render_paths
-            and new_retry_counts.get(scene_id, 0) < 3
+            and new_retry_counts.get(scene_id, 0) < 5
         ]
 
         if not scenes_to_validate:
@@ -180,11 +180,11 @@ def validation_router(state: LangGraphState) -> Literal["code_generator_node", "
         scene_id = scene["scene_id"]
         if scene_id not in render_paths:
             all_success = False
-            if retry_counts.get(scene_id, 0) < 3:
+            if retry_counts.get(scene_id, 0) < 5:  # match code_generator_node limit
                 needs_retry = True
 
     if all_success:
-        return "voiceover_node"   # mapped to voiceover_and_images_node in add_conditional_edges
+        return "voiceover_node"
     elif needs_retry:
         return "code_generator_node"
     else:

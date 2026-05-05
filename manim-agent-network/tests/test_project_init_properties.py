@@ -203,10 +203,10 @@ _REQUIRED_ENV_KEYS = [
     ("NVIDIA_API_KEY", "your-nvidia-api-key-here"),
     ("LANGSMITH_API_KEY", "your-langsmith-api-key-here"),
     ("SCRIPT_WRITER_MODEL", "moonshotai/kimi-k2-instruct"),
-    ("CODE_GENERATOR_MODEL", "moonshotai/kimi-k2-instruct"),
-    ("VOICEOVER_PROVIDER", "dia2"),
-    ("VOICEOVER_FALLBACK_PROVIDER", "kokoro"),
-    ("ALLOW_ESPEAK_FALLBACK", "false"),
+    ("CODE_GENERATOR_MODEL", "qwen/qwen3-coder-480b-a35b-instruct"),
+    ("VOICEOVER_PROVIDER", "kokoro"),
+    ("VOICEOVER_FALLBACK_PROVIDER", "espeak"),
+    ("ALLOW_ESPEAK_FALLBACK", "true"),
     ("KOKORO_VOICE", "af_sarah"),
 ]
 

@@ -4,15 +4,15 @@ from shared.schemas.responses import ScriptWriterResponse
 from shared.schemas.common import ScriptResponse
 from shared.config import settings
 from shared.llm_client import get_llm_client
+from shared.log import get_logger, set_log_context, timed_block, log_llm_call, make_request_logging_middleware
 import json
-import logging
 import uuid
 import time
 import os
 
 app = FastAPI(title="Script Writer Service")
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+app.add_middleware(make_request_logging_middleware("script-writer"))
+logger = get_logger(__name__)
 
 _tracer = None
 if os.getenv("LANGSMITH_API_KEY"):
@@ -25,12 +25,13 @@ if os.getenv("LANGSMITH_API_KEY"):
         logger.warning("langsmith not installed, tracing disabled")
 
 client = get_llm_client()
-logger.info(f"Script Writer using model: {settings.SCRIPT_WRITER_MODEL}")
+logger.info("Script Writer ready", extra={"model": settings.SCRIPT_WRITER_MODEL})
 
 
 @app.post("/generate", response_model=ScriptWriterResponse)
 async def generate_script(request: ScriptWriterRequest):
-    logger.info(f"Generating script for topic: {request.topic} | model: {settings.SCRIPT_WRITER_MODEL}")
+    set_log_context(job_id=getattr(request, "job_id", ""))
+    logger.info("Generating script", extra={"topic": request.topic, "model": settings.SCRIPT_WRITER_MODEL})
 
     run_id     = str(uuid.uuid4())
     start_time = time.time()
@@ -48,7 +49,11 @@ async def generate_script(request: ScriptWriterRequest):
     prompt = f"""
 You are an expert technical director for educational video production.
 
-Create a 3-5 scene script for a video about: **{request.topic}**
+Create a script for a video about: **{request.topic}**
+
+Decide how many scenes the topic needs. A simple concept might need 3 scenes.
+A complex topic might need 7 or more. Use as many scenes as it takes to explain
+the topic clearly — do not pad, do not cut short.
 
 ## Scene Types — choose based on what the scene ACTUALLY needs:
 
@@ -65,12 +70,14 @@ Create a 3-5 scene script for a video about: **{request.topic}**
 - Any scene where shapes, curves, or math objects move/transform
 
 ## Rules:
-- Scene 1 MUST be "hyperframes" (title/intro)
+- Scene 1 MUST be "hyperframes" (title/intro card)
 - Last scene MUST be "hyperframes" (summary/outro)
 - Middle scenes: pick the type that best serves the content
   - Text explanation → "hyperframes"
   - Visual diagram or math animation → "manim"
-- Keep narration_text natural and conversational (TTS-friendly, 1-3 sentences)
+- narration_text must be natural and conversational (TTS-friendly, 1-3 sentences per scene)
+- estimated_duration_seconds should reflect how long the narration actually takes to speak
+  (roughly 130 words per minute — a 2-sentence narration ≈ 8-12 seconds)
 - visual_description must be specific:
   - For hyperframes: describe layout, text content, colors, GSAP animations
   - For manim: describe exact objects, formulas, and animation sequence
@@ -81,10 +88,11 @@ Return ONLY valid JSON:
   "scenes": [
     {{
       "scene_id": 1,
+      "title": "Short Scene Title (4-6 words, shown as title bar)",
       "content_type": "hyperframes",
       "narration_text": "...",
       "visual_description": "...",
-      "estimated_duration_seconds": 5
+      "estimated_duration_seconds": 8
     }}
   ]
 }}
@@ -92,7 +100,7 @@ Return ONLY valid JSON:
 
     try:
         llm_start = time.time()
-        response  = client.chat.completions.create(
+        response  = await client.chat.completions.acreate(
             model=settings.SCRIPT_WRITER_MODEL,
             messages=[
                 {"role": "system", "content": "You are an expert technical director. Always respond with valid JSON only."},
@@ -102,6 +110,10 @@ Return ONLY valid JSON:
             response_format={"type": "json_object"}
         )
         llm_duration = time.time() - llm_start
+        log_llm_call(logger, settings.SCRIPT_WRITER_MODEL,
+                     prompt_chars=len(prompt),
+                     response_chars=len(response.choices[0].message.content),
+                     elapsed_s=llm_duration)
 
         if _tracer:
             try:
@@ -123,9 +135,15 @@ Return ONLY valid JSON:
             except Exception:
                 pass
 
-        logger.info(f"Script generated: '{script_data.title}' with {len(script_data.scenes)} scenes")
+        logger.info(
+            "Script generated",
+            extra={"title": script_data.title, "scenes": len(script_data.scenes),
+                   "types": [s.content_type for s in script_data.scenes]},
+        )
         for s in script_data.scenes:
-            logger.info(f"  Scene {s.scene_id}: [{s.content_type or 'unset'}] {s.narration_text[:60]}...")
+            logger.info("  scene plan", extra={"scene_id": s.scene_id, "type": s.content_type,
+                                               "duration_s": s.estimated_duration_seconds,
+                                               "narration_preview": s.narration_text[:60]})
 
         return ScriptWriterResponse(script=script_data)
 

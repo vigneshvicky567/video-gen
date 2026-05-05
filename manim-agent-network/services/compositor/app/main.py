@@ -1,5 +1,3 @@
-"""Compositor service main FastAPI application."""
-
 import subprocess
 import logging
 import traceback
@@ -11,14 +9,15 @@ from fastapi.responses import JSONResponse
 from shared.config import settings
 from shared.schemas.requests import AssemblerRequest
 from shared.schemas.responses import AssemblerResponse
+from shared.log import get_logger, set_log_context, timed_block, log_subprocess, log_file, make_request_logging_middleware
 
 from .duration_prober import compute_scene_timings, AssemblyError
 from .llm_composer import compose_html
 from .html_validator import validate_composition
 
 app = FastAPI(title="Compositor Service")
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+app.add_middleware(make_request_logging_middleware("compositor"))
+logger = get_logger(__name__)
 
 
 @app.get("/health")
@@ -29,35 +28,39 @@ async def health_check():
 @app.post("/assemble", response_model=AssemblerResponse)
 async def assemble(request: AssemblerRequest):
     try:
-        logger.info(f"=== ASSEMBLY START job={request.job_id} ===")
-        logger.info(f"render_paths: {request.render_paths}")
-        logger.info(f"audio_paths:  {request.audio_paths}")
-        logger.info(f"scene_plans:  {[s.get('scene_id') if isinstance(s, dict) else s.scene_id for s in (request.scene_plans or [])]}")
+        set_log_context(job_id=request.job_id)
+        logger.info("Assembly start", extra={
+            "render_paths": len(request.render_paths),
+            "audio_paths": len(request.audio_paths),
+            "scenes": [s.get("scene_id") if isinstance(s, dict) else s.scene_id for s in (request.scene_plans or [])],
+        })
 
         # Step 1: Compute scene timings
-        logger.info("Step 1: Computing scene timings...")
-        scene_timings = compute_scene_timings(
-            request.render_paths,
-            request.audio_paths,
-            request.scene_plans,
-        )
+        with timed_block(logger, "compute scene timings"):
+            scene_timings = compute_scene_timings(
+                request.render_paths, request.audio_paths, request.scene_plans,
+            )
         for t in scene_timings:
-            logger.info(f"  Scene {t.scene_id}: video={t.actual_video_duration_seconds}s audio={t.actual_audio_duration_seconds}s start={t.start_time_seconds}s path={t.render_path}")
+            logger.info("scene timing", extra={"scene_id": t.scene_id,
+                                                "video_s": t.actual_video_duration_seconds,
+                                                "audio_s": t.actual_audio_duration_seconds,
+                                                "start_s": t.start_time_seconds,
+                                                "path": t.render_path})
 
         # Step 2: Generate HyperFrames HTML composition
-        logger.info("Step 2: Generating HyperFrames HTML composition...")
-        html_path = compose_html(
-            script_title=request.script_title,
-            scene_timings=scene_timings,
-            image_paths=request.image_paths,
-            job_id=request.job_id,
-            scene_plans=request.scene_plans,
-        )
-        logger.info(f"HTML composition saved: {html_path}")
+        with timed_block(logger, "compose HTML"):
+            html_path = compose_html(
+                script_title=request.script_title,
+                scene_timings=scene_timings,
+                image_paths=request.image_paths,
+                job_id=request.job_id,
+                scene_plans=request.scene_plans,
+            )
+        log_file(logger, "written", html_path)
 
         # Step 3: Validate HTML
-        logger.info("Step 3: Validating HTML composition...")
-        validate_composition(html_path)
+        with timed_block(logger, "validate HTML"):
+            validate_composition(html_path)
         logger.info("HTML validation passed")
 
         # Step 4: Render with HyperFrames
@@ -80,22 +83,12 @@ async def assemble(request: AssemblerRequest):
             "--workers", "1",
         ]
 
-        logger.info(f"Step 4: Running: {' '.join(render_command)}")
-        logger.info(f"  cwd: {composition_dir}")
-
-        result = subprocess.run(
-            render_command,
-            capture_output=True,
-            text=True,
-            cwd=str(composition_dir),
-            timeout=600,
-        )
-
-        logger.info(f"HyperFrames returncode: {result.returncode}")
-        if result.stdout:
-            logger.info(f"STDOUT:\n{result.stdout[:3000]}")
-        if result.stderr:
-            logger.info(f"STDERR:\n{result.stderr[:3000]}")
+        with timed_block(logger, "HyperFrames render"):
+            result = subprocess.run(
+                render_command, capture_output=True, text=True,
+                cwd=str(composition_dir), timeout=600,
+            )
+        log_subprocess(logger, render_command, result, label="hyperframes")
 
         if result.returncode != 0:
             raise AssemblyError(
@@ -110,7 +103,9 @@ async def assemble(request: AssemblerRequest):
         if output_path.stat().st_size == 0:
             raise AssemblyError(f"Output file is empty: {output_path}")
 
-        logger.info(f"=== ASSEMBLY COMPLETE: {output_path} ({output_path.stat().st_size} bytes) ===")
+        log_file(logger, "output", str(output_path))
+        logger.info("Assembly complete", extra={"output": str(output_path),
+                                                 "size_bytes": output_path.stat().st_size})
         return AssemblerResponse(final_output_path=str(output_path))
 
     except AssemblyError as e:

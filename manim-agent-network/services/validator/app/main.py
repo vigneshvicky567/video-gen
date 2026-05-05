@@ -2,17 +2,51 @@ from fastapi import FastAPI
 from shared.schemas.requests import ValidatorRequest
 from shared.schemas.responses import ValidatorResponse
 from shared.config import settings
+from shared.log import get_logger, set_log_context, timed_block, log_subprocess, log_file, make_request_logging_middleware
+import asyncio
 import subprocess
 import os
-import logging
+import sys
 import glob
 import uuid
 import time
+import ast
 
-# LangSmith Tracing
 app = FastAPI(title="Validator Service")
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+app.add_middleware(make_request_logging_middleware("validator"))
+logger = get_logger(__name__)
+
+# Cap concurrent manim subprocesses; prevents CPU thrash under asyncio.gather fanout.
+_RENDER_SEMAPHORE = asyncio.Semaphore(max(1, (os.cpu_count() or 2) // 2))
+
+# Render budget bounds.
+_TIMEOUT_FLOOR_S = 90
+_TIMEOUT_PER_PLAY_S = 20
+_TIMEOUT_CEILING_S = 600
+
+# Self-test source. MUST be flagged by AST preflight; otherwise image is stale.
+_SELF_TEST_BAD_SOURCE = (
+    "from manim import *\n"
+    "class S(Scene):\n"
+    "    def construct(self):\n"
+    "        self.play(ShowCreation(Circle()))\n"
+)
+
+
+def _compute_timeout(source: str) -> int:
+    """Adaptive timeout: floor + per-play surcharge, capped."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return _TIMEOUT_FLOOR_S
+    plays = sum(
+        1 for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "play"
+    )
+    return min(_TIMEOUT_CEILING_S, max(_TIMEOUT_FLOOR_S,
+              _TIMEOUT_FLOOR_S + _TIMEOUT_PER_PLAY_S * plays))
 
 
 def detect_content_type(code_path: str) -> str:
@@ -87,6 +121,44 @@ def validate_hyperframes(code_path: str) -> tuple:
         logger.error(f"Error validating HyperFrames: {e}")
         return False, "", str(e)
 
+
+def _preflight_ast_checks(source: str, scene_id: int) -> tuple:
+    """Run lightweight AST checks to detect deprecated/forbidden constructs.
+
+    Returns (passed: bool, error_message: str).
+    """
+    issues = []
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as e:
+        return False, f"SyntaxError at line {e.lineno}: {e.msg}"
+
+    class Checker(ast.NodeVisitor):
+        def visit_ImportFrom(self, node: ast.ImportFrom):
+            if node.module and ("manimlib" in node.module or "manimgl" in node.module):
+                issues.append(f"Legacy import detected: from {node.module} - use 'from manim import *' instead")
+            self.generic_visit(node)
+
+        def visit_Name(self, node: ast.Name):
+            forbidden = {"SVGMobject", "SVGCircle", "ShowCreation", "ShowCreationThenFadeOut", "VGraph", "there_and_back_once"}
+            if node.id in forbidden:
+                issues.append(f"Forbidden identifier used: {node.id}")
+            self.generic_visit(node)
+
+        def visit_Attribute(self, node: ast.Attribute):
+            # Detect rate_functions.ease_out usage
+            if isinstance(node.value, ast.Name):
+                key = f"{node.value.id}.{node.attr}"
+                if key == "rate_functions.ease_out":
+                    issues.append("Use 'rate_functions.ease_out_sine' instead of 'rate_functions.ease_out'")
+            self.generic_visit(node)
+
+    Checker().visit(tree)
+
+    if issues:
+        return False, "\n".join(issues)
+    return True, ""
+
 # LangSmith tracer setup
 _tracer = None
 if os.getenv("LANGSMITH_API_KEY"):
@@ -98,13 +170,65 @@ if os.getenv("LANGSMITH_API_KEY"):
     except ImportError:
         logger.warning("langsmith not installed, tracing disabled")
 
+
+def _run_self_test() -> None:
+    """Fail-fast on stale images: confirm AST preflight catches a known-bad source."""
+    ok, _ = _preflight_ast_checks(_SELF_TEST_BAD_SOURCE, scene_id=0)
+    if ok:
+        logger.error("STALE IMAGE: AST preflight failed self-test (ShowCreation slipped through)")
+        sys.exit(1)
+    logger.info("Validator self-test passed: AST preflight active")
+
+
+def _warmup_latex() -> None:
+    """Render a one-time warmup scene to seed LaTeX/dvisvgm caches.
+
+    Cold-cache renders take ~30s for first Tex; warmup brings it to ~3s.
+    Failure is non-fatal — log and continue.
+    """
+    warmup_dir = os.path.join(settings.WORKSPACE_DIR, "_warmup")
+    flag_path = os.path.join(warmup_dir, ".done")
+    if os.path.exists(flag_path):
+        logger.info("LaTeX warmup skipped (already done)")
+        return
+    try:
+        os.makedirs(warmup_dir, exist_ok=True)
+        scene_path = os.path.join(warmup_dir, "warmup_scene.py")
+        with open(scene_path, "w", encoding="utf-8") as f:
+            f.write(
+                "from manim import *\n"
+                "class Warmup(Scene):\n"
+                "    def construct(self):\n"
+                "        self.add(Tex('warmup'))\n"
+                "        self.add(MathTex('x^2'))\n"
+                "        self.wait(0.1)\n"
+            )
+        cmd = ["manim", "render", "-ql", "--media_dir", warmup_dir, scene_path, "Warmup"]
+        with timed_block(logger, "latex warmup"):
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        if proc.returncode == 0:
+            with open(flag_path, "w") as f:
+                f.write("ok")
+            logger.info("LaTeX warmup complete")
+        else:
+            logger.warning(f"LaTeX warmup exit={proc.returncode}; continuing")
+    except Exception as e:
+        logger.warning(f"LaTeX warmup failed (non-fatal): {e}")
+
+
+@app.on_event("startup")
+async def _on_startup() -> None:
+    _run_self_test()
+    # Warmup synchronously but in a thread so we don't block uvicorn loop forever.
+    await asyncio.to_thread(_warmup_latex)
+
 @app.post("/validate", response_model=ValidatorResponse)
 async def validate_code(request: ValidatorRequest):
-    logger.info(f"Validating code for job {request.job_id}, scene {request.scene_id}")
-
-    # Detect content type
+    set_log_context(job_id=request.job_id, scene_id=request.scene_id)
     content_type = detect_content_type(request.code_path)
-    logger.info(f"Scene {request.scene_id} detected as: {content_type}")
+    logger.info("Validation request", extra={"scene_id": request.scene_id,
+                                              "content_type": content_type,
+                                              "code_path": request.code_path})
     
     # Start LangSmith trace
     run_id = str(uuid.uuid4())
@@ -192,52 +316,68 @@ async def _validate_manim(request, run_id, start_time):
 
     scene_class_name = f"Scene{request.scene_id}"
 
-    # Run manim as a subprocess
+    # Quick syntax check before invoking manim — catches truncated strings, etc.
+    try:
+        with open(request.code_path, "r", encoding="utf-8") as f:
+            source = f.read()
+        # Run a lightweight AST preflight to catch deprecated/forbidden constructs
+        ok, ast_err = _preflight_ast_checks(source, request.scene_id)
+        if not ok:
+            logger.error("AST preflight failed", extra={"scene_id": request.scene_id, "error": ast_err})
+            return ValidatorResponse(
+                scene_id=request.scene_id,
+                success=False,
+                error_log=ast_err,
+            )
+        compile(source, request.code_path, "exec")
+    except SyntaxError as e:
+        logger.error("Python syntax error before render", extra={"scene_id": request.scene_id,
+                                                                   "error": str(e), "line": e.lineno})
+        return ValidatorResponse(
+            scene_id=request.scene_id,
+            success=False,
+            error_log=f"SyntaxError at line {e.lineno}: {e.msg}\n{e.text}",
+        )
+    # -qh = 1080p30, matches the 1920x1080 composition canvas so no letterboxing.
+    # No --transparent: manim's default dark bg is intentional; keeping it avoids
+    # the near-black composition bg bleeding through transparent areas.
     cmd = [
         "manim",
         "render",
-        "-qm", # Medium quality 720p30 (1280x720 landscape) - changed from -ql (480p15 portrait)
+        "-qh",
         "--media_dir", output_dir,
         request.code_path,
         scene_class_name
     ]
 
+    timeout_s = _compute_timeout(source)
     try:
-        render_start = time.time()
-        logger.info(f"Running manim cmd: {' '.join(cmd)}")
-        process = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-        render_duration = time.time() - render_start
-        logger.info(f"Manim returncode={process.returncode} for scene {request.scene_id} in {render_duration:.1f}s")
-        
-        # Log render trace
-        if _tracer:
-            try:
-                _tracer.update_run(
-                    run_id=run_id,
-                    inputs={"code_path": request.code_path, "scene_class": scene_class_name},
-                    outputs={"return_code": process.returncode},
-                    metrics={"render_latency": render_duration}
+        async with _RENDER_SEMAPHORE:
+            with timed_block(logger, "manim render", scene_id=request.scene_id):
+                logger.info("Running manim", extra={"cmd": " ".join(cmd), "timeout_s": timeout_s})
+                process = await asyncio.to_thread(
+                    subprocess.run, cmd,
+                    capture_output=True, text=True, timeout=timeout_s,
                 )
-            except Exception:
-                pass
+        log_subprocess(logger, cmd, process, label="manim", scene_id=request.scene_id)
 
         if process.returncode == 0:
-            logger.info(f"Render successful for scene {request.scene_id}")
-            # Find the rendered mp4 file. Manim outputs to: media_dir/videos/filename/720p30/SceneName.mp4
-            # We use glob because the exact resolution folder depends on the -q flag
-            # -qm produces 720p30, -ql produces 480p15, -qh produces 1080p60
-            search_path = os.path.join(output_dir, "videos", "*", "*", f"{scene_class_name}.mp4")
-            mp4_files = glob.glob(search_path)
+            logger.info("Manim render succeeded", extra={"scene_id": request.scene_id})
+            search_mov = os.path.join(output_dir, "videos", "*", "*", f"{scene_class_name}.mov")
+            search_mp4 = os.path.join(output_dir, "videos", "*", "*", f"{scene_class_name}.mp4")
+            mp4_files = glob.glob(search_mov) or glob.glob(search_mp4)
 
             total_duration = time.time() - start_time
             
             if mp4_files:
                 if any("480p15" in p.replace("\\", "/") for p in mp4_files):
+                    logger.error("Manim produced 480p15 output — wrong quality flag", extra={"paths": mp4_files})
                     return ValidatorResponse(
-                        scene_id=request.scene_id,
-                        success=False,
-                        error_log="Manim rendered 480p15 output; validator must run with -qm and produce 720p30."
+                        scene_id=request.scene_id, success=False,
+                        error_log="Manim rendered 480p15 output; validator must run with -qh and produce 1080p60."
                     )
+                log_file(logger, "rendered", mp4_files[0], scene_id=request.scene_id)
+                logger.info("Render output found", extra={"scene_id": request.scene_id, "path": mp4_files[0]})
                 # Final trace update
                 if _tracer:
                     try:
@@ -322,7 +462,7 @@ async def _validate_manim(request, run_id, start_time):
         return ValidatorResponse(
             scene_id=request.scene_id,
             success=False,
-            error_log="Manim render timed out after 120 seconds"
+            error_log=f"Manim render timed out after {timeout_s} seconds"
         )
 
     except Exception as e:

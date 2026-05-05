@@ -11,6 +11,8 @@ from .duration_prober import AssemblyError
 REQUIRED_ATTRS = ["data-start", "data-duration", "data-track-index"]
 TIMED_TAGS = ("video", "audio", "img", "iframe")
 COUNTED_TAGS = ("video", "audio", "img")
+# data-composition-src is used on <div> elements for HyperFrames sub-compositions
+# (replaces <iframe> to avoid screenshot-capture mode)
 
 
 class CompositionValidator(HTMLParser):
@@ -37,6 +39,10 @@ class CompositionValidator(HTMLParser):
         # Collect src paths from media elements
         if tag in TIMED_TAGS and "src" in attrs_dict:
             self.src_paths.append(attrs_dict["src"])
+
+        # Also collect data-composition-src from <div> sub-compositions
+        if "data-composition-src" in attrs_dict:
+            self.src_paths.append(attrs_dict["data-composition-src"])
 
         # If element has data-start, it's a timed element — validate it
         if "data-start" in attrs_dict or "data-duration" in attrs_dict:

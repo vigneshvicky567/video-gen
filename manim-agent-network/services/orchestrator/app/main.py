@@ -1,18 +1,16 @@
 from fastapi import FastAPI, BackgroundTasks
 from shared.schemas.common import GenerationRequest, JobState
 from shared.models.agent_state import LangGraphState
+from shared.log import get_logger, set_log_context, clear_log_context, make_request_logging_middleware
 from app.core.graph import app_graph
 import uuid
-import logging
 import os
 import time
 
-# LangSmith Tracing
 app = FastAPI(title="Orchestrator Service")
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+app.add_middleware(make_request_logging_middleware("orchestrator"))
+logger = get_logger(__name__)
 
-# LangSmith tracer setup
 _tracer = None
 if os.getenv("LANGSMITH_API_KEY"):
     try:
@@ -23,86 +21,61 @@ if os.getenv("LANGSMITH_API_KEY"):
     except ImportError:
         logger.warning("langsmith not installed, tracing disabled")
 
-# In-memory store for demo. In production, use DB (e.g., PostgreSQL/Redis via shared/database)
 jobs_db = {}
 
 async def run_pipeline(job_id: str, topic: str):
-    logger.info(f"Starting pipeline for job {job_id}")
-    
-    # Start LangSmith trace
+    set_log_context(job_id=job_id)
+    logger.info("Pipeline starting", extra={"topic": topic})
+
     run_id = str(uuid.uuid4())
     start_time = time.time()
-    
+
     if _tracer:
         try:
             _tracer.create_run(
-                name="orchestrator.pipeline",
-                run_type="chain",
-                run_id=run_id,
-                metadata={
-                    "service": "orchestrator",
-                    "job_id": job_id,
-                    "topic": topic
-                }
+                name="orchestrator.pipeline", run_type="chain", run_id=run_id,
+                metadata={"service": "orchestrator", "job_id": job_id, "topic": topic}
             )
         except Exception as e:
             logger.debug(f"LangSmith trace start failed: {e}")
 
     initial_state: LangGraphState = {
-        "job_id": job_id,
-        "topic": topic,
-        "status": "pending",
-        "script": None,
-        "code_paths": {},
-        "render_paths": {},
-        "audio_paths": {},
-        "retry_counts": {},
-        "error_logs": {},
-        "previous_code": {},
-        "final_output_path": None,
-        "overall_error": None
+        "job_id": job_id, "topic": topic, "status": "pending",
+        "script": None, "code_paths": {}, "render_paths": {}, "audio_paths": {},
+        "retry_counts": {}, "error_logs": {}, "previous_code": {},
+        "final_output_path": None, "overall_error": None,
     }
 
     try:
-        # We use ainvoke for asynchronous execution of the graph
         final_state = await app_graph.ainvoke(initial_state)
         jobs_db[job_id] = final_state
-        
-        total_duration = time.time() - start_time
-        
-        # Final trace update
+        elapsed = time.time() - start_time
+        scene_count = len((final_state.get("script") or {}).get("scenes", []))
+        logger.info(
+            "Pipeline finished",
+            extra={"status": final_state["status"], "scenes": scene_count, "elapsed_s": round(elapsed, 2)},
+        )
         if _tracer:
             try:
-                _tracer.update_run(
-                    run_id=run_id,
-                    outputs={
-                        "status": final_state.get("status"),
-                        "scenes": len(final_state.get("script", {}).get("scenes", [])) if final_state.get("script") else 0
-                    },
-                    end_time=time.time(),
-                    metrics={"total_latency": total_duration}
-                )
+                _tracer.update_run(run_id=run_id,
+                    outputs={"status": final_state.get("status"), "scenes": scene_count},
+                    end_time=time.time(), metrics={"total_latency": elapsed})
             except Exception:
                 pass
-        
-        logger.info(f"Pipeline finished for job {job_id}. Final status: {final_state['status']}")
     except Exception as e:
-        total_duration = time.time() - start_time
+        elapsed = time.time() - start_time
+        logger.error("Pipeline crashed", extra={"elapsed_s": round(elapsed, 2)}, exc_info=True)
         if _tracer:
             try:
-                _tracer.update_run(
-                    run_id=run_id,
-                    error=str(e),
-                    end_time=time.time(),
-                    metrics={"total_latency": total_duration}
-                )
+                _tracer.update_run(run_id=run_id, error=str(e),
+                    end_time=time.time(), metrics={"total_latency": elapsed})
             except Exception:
                 pass
-        
-        logger.error(f"Pipeline crashed for job {job_id}: {e}")
         initial_state["status"] = "failed"
         initial_state["overall_error"] = str(e)
         jobs_db[job_id] = initial_state
+    finally:
+        clear_log_context()
 
 
 @app.post("/generate", response_model=dict)

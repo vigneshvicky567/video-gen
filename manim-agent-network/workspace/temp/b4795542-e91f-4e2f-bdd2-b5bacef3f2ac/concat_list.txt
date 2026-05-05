@@ -1,4 +1,0 @@
-file '/workspace/temp/b4795542-e91f-4e2f-bdd2-b5bacef3f2ac/scene_1_merged.mp4'
-file '/workspace/temp/b4795542-e91f-4e2f-bdd2-b5bacef3f2ac/scene_2_merged.mp4'
-file '/workspace/temp/b4795542-e91f-4e2f-bdd2-b5bacef3f2ac/scene_3_merged.mp4'
-file '/workspace/temp/b4795542-e91f-4e2f-bdd2-b5bacef3f2ac/scene_4_merged.mp4'

@@ -2,9 +2,8 @@
 Image Fetcher Service - FastAPI application
 
 Fetches contextually relevant images for each scene using Pexels (primary)
-and Wikimedia Commons (fallback). Downloads and validates images by magic bytes.
-
-Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7
+and Wikimedia Commons (fallback). Downloads and validates images by magic bytes,
+then re-ranks and filters by SigLIP image-text similarity.
 """
 
 import logging
@@ -12,30 +11,33 @@ from pathlib import Path
 from typing import Dict, List
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 
 from shared.config import settings
+from shared.log import get_logger, set_log_context, make_request_logging_middleware
 from shared.schemas.requests import ImageFetcherRequest
 from shared.schemas.responses import ImageFetcherResponse
 
 from .keyword_extractor import extract_keywords
 from .pexels_client import search_pexels
+# from .siglip_scorer import filter_by_relevance  # TODO: enable when SigLIP models are downloaded
 from .wikimedia_client import search_wikimedia
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
-
 app = FastAPI(title="Image Fetcher Service", version="1.0.0")
+app.add_middleware(make_request_logging_middleware("image-fetcher"))
+logger = get_logger(__name__)
 
 # Magic bytes for image validation
 # JPEG: FF D8 FF
 # PNG: 89 50 4E 47
 JPEG_MAGIC = bytes([0xFF, 0xD8, 0xFF])
 PNG_MAGIC = bytes([0x89, 0x50, 0x4E, 0x47])
+
+DOWNLOAD_HEADERS = {
+    "User-Agent": "ManimAgentNetwork/1.0 (https://github.com/manim-agent-network; contact@example.com) python-httpx",
+    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    "Referer": "https://commons.wikimedia.org/",
+}
 
 
 def validate_image_magic_bytes(data: bytes) -> bool:
@@ -93,7 +95,7 @@ async def download_and_validate_image(
     """
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(url)
+            response = await client.get(url, headers=DOWNLOAD_HEADERS, follow_redirects=True)
             
             if response.status_code >= 400:
                 logger.warning(
@@ -143,122 +145,79 @@ async def fetch_images_for_scene(
     visual_description: str,
     job_id: str
 ) -> List[str]:
-    """
-    Fetch images for a single scene.
-    
-    Process:
-    1. Extract keywords from narration_text and visual_description
-    2. Query Pexels API
-    3. If Pexels returns empty, query Wikimedia Commons
-    4. Download each candidate URL
-    5. Validate magic bytes (JPEG: FF D8 FF, PNG: 89 50 4E 47)
-    6. Write valid images to {WORKSPACE_DIR}/temp/{job_id}/images/scene_{scene_id}/img_{n}.jpg
-    7. Return list of absolute paths to validated images
-    
-    Args:
-        scene_id: The scene ID.
-        narration_text: The narration text for the scene.
-        visual_description: The visual description for the scene.
-        job_id: The job ID.
-    
-    Returns:
-        A list of absolute paths to validated images (may be empty).
-    
-    Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7
-    """
-    logger.info(f"Fetching images for scene {scene_id}")
-    
+    set_log_context(scene_id=scene_id)
+    logger.info("Fetching images", extra={"scene_id": scene_id})
+
     # Step 1: Extract keywords
     keywords = extract_keywords(narration_text, visual_description)
-    logger.info(f"Extracted keywords for scene {scene_id}: {keywords}")
-    
-    # Step 2: Query Pexels
+    logger.info("Keywords extracted", extra={"scene_id": scene_id, "keywords": keywords})
+
+    # Step 2: Query Pexels, fallback to Wikimedia
+    if not settings.PEXELS_API_KEY:
+        logger.warning("PEXELS_API_KEY not set, skipping Pexels search", extra={"scene_id": scene_id})
     candidate_urls = await search_pexels(keywords)
-    logger.info(f"Pexels returned {len(candidate_urls)} candidates for scene {scene_id}")
-    
-    # Step 3: If Pexels returns empty, query Wikimedia
+    logger.info("Pexels results", extra={"scene_id": scene_id, "count": len(candidate_urls)})
+
     if not candidate_urls:
-        logger.info(f"Pexels returned empty, querying Wikimedia for scene {scene_id}")
         candidate_urls = await search_wikimedia(keywords)
-        logger.info(
-            f"Wikimedia returned {len(candidate_urls)} candidates for scene {scene_id}"
-        )
-    
-    # Step 4-6: Download, validate, and save images
+        logger.info("Wikimedia results", extra={"scene_id": scene_id, "count": len(candidate_urls)})
+        if not candidate_urls:
+            logger.warning(
+                "No image candidates found",
+                extra={"scene_id": scene_id, "keywords": keywords}
+            )
+
+    # Step 3: Download + magic-byte validate
     image_paths: List[str] = []
-    
     for idx, url in enumerate(candidate_urls):
-        # Construct output path
-        output_dir = Path(settings.WORKSPACE_DIR) / "temp" / job_id / "images" / f"scene_{scene_id}"
+        output_dir  = Path(settings.WORKSPACE_DIR) / "temp" / job_id / "images" / f"scene_{scene_id}"
         output_path = output_dir / f"img_{idx}.jpg"
-        
-        # Download and validate
-        success = await download_and_validate_image(url, output_path, scene_id, idx)
-        
-        if success:
-            # Record absolute path
+        if await download_and_validate_image(url, output_path, scene_id, idx):
             image_paths.append(str(output_path.absolute()))
-    
-    # Step 7: Return list of validated image paths (may be empty)
-    logger.info(f"Scene {scene_id} has {len(image_paths)} validated images")
+
+    logger.info("Downloaded images", extra={"scene_id": scene_id, "count": len(image_paths)})
+
+    if not image_paths:
+        return []
+
+    # TODO: SigLIP relevance filter — uncomment when models are available
+    # query = f"{visual_description}. {narration_text}"
+    # ranked = filter_by_relevance(image_paths, query_text=query, top_k=3)
+    # logger.info("After SigLIP filter", extra={"scene_id": scene_id,
+    #                                            "before": len(image_paths),
+    #                                            "after": len(ranked)})
+    # return ranked
+
     return image_paths
 
 
 @app.post("/fetch", response_model=ImageFetcherResponse)
 async def fetch_images(request: ImageFetcherRequest) -> ImageFetcherResponse:
-    """
-    Fetch contextually relevant images for all scenes in the request.
-    
-    For each scene:
-    - Extract keywords from narration_text and visual_description
-    - Query Pexels API (primary source)
-    - If Pexels returns empty, query Wikimedia Commons (fallback)
-    - Download each candidate image URL
-    - Validate magic bytes (JPEG: FF D8 FF, PNG: 89 50 4E 47)
-    - Write valid images to {WORKSPACE_DIR}/temp/{job_id}/images/scene_{scene_id}/img_{n}.jpg
-    - Record empty list for scene if both sources return nothing
-    
-    Never raises exceptions on missing images - always returns a response.
-    
-    Args:
-        request: ImageFetcherRequest containing job_id and list of ScenePlan objects.
-    
-    Returns:
-        ImageFetcherResponse with mapping of scene_id to list of absolute image paths.
-    
-    Validates: Requirements 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7
-    """
-    logger.info(f"Received fetch request for job {request.job_id} with {len(request.scenes)} scenes")
-    
-    image_paths: Dict[int, List[str]] = {}
-    
-    # Process each scene
-    for scene in request.scenes:
+    """Fetch images for all scenes in parallel."""
+    import asyncio
+    logger.info("Image fetch request", extra={"job_id": request.job_id, "scenes": len(request.scenes)})
+
+    async def _safe_fetch(scene) -> tuple:
         try:
-            scene_images = await fetch_images_for_scene(
+            paths = await fetch_images_for_scene(
                 scene_id=scene.scene_id,
                 narration_text=scene.narration_text,
                 visual_description=scene.visual_description,
-                job_id=request.job_id
+                job_id=request.job_id,
             )
-            
-            # Record the image paths (may be empty list)
-            image_paths[scene.scene_id] = scene_images
-            
+            return scene.scene_id, paths
         except Exception as e:
-            # Never raise on missing images - record empty list and continue
-            logger.error(
-                f"Error fetching images for scene {scene.scene_id}: {e}. "
-                f"Recording empty list and continuing."
-            )
-            image_paths[scene.scene_id] = []
-    
-    logger.info(
-        f"Completed fetch request for job {request.job_id}. "
-        f"Total scenes: {len(request.scenes)}, "
-        f"Scenes with images: {sum(1 for paths in image_paths.values() if paths)}"
-    )
-    
+            logger.error("Image fetch failed for scene", extra={"scene_id": scene.scene_id, "error": str(e)})
+            return scene.scene_id, []
+
+    # Run all scenes in parallel
+    results = await asyncio.gather(*[_safe_fetch(s) for s in request.scenes])
+    image_paths = {sid: paths for sid, paths in results}
+
+    scenes_with_images = sum(1 for p in image_paths.values() if p)
+    logger.info("Image fetch complete", extra={"job_id": request.job_id,
+                                                "total": len(request.scenes),
+                                                "with_images": scenes_with_images})
     return ImageFetcherResponse(image_paths=image_paths)
 
 

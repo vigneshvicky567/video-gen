@@ -2,6 +2,5 @@ from manim import *
 
 class Scene1(Scene):
     def construct(self):
-        formula = MathTex(r"\text{Transformer Architecture}")
-        self.add(formula)
+        Tex(r'\text{Standalone test}')
         self.wait()

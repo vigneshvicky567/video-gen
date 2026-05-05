@@ -74,6 +74,10 @@ def compute_scene_timings(
     Raises:
         AssemblyError: If any file cannot be probed
     """
+    # Normalize keys to int — JSON serialization turns int keys into strings
+    render_paths = {int(k): v for k, v in render_paths.items()}
+    audio_paths  = {int(k): v for k, v in audio_paths.items()}
+
     # Build estimated duration lookup from scene plans
     estimated_durations = {}
     if scene_plans:

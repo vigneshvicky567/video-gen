@@ -1,28 +1,28 @@
 from __future__ import annotations
 
-import logging
+import asyncio
 import os
 import subprocess
 import time
 import uuid
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from fastapi import FastAPI, HTTPException
 
 from shared.config import settings
 from shared.schemas.requests import VoiceoverRequest
 from shared.schemas.responses import VoiceoverResponse
+from shared.log import get_logger, set_log_context, timed_block, log_file, make_request_logging_middleware
 
 app = FastAPI(title="Voiceover Service")
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+app.add_middleware(make_request_logging_middleware("voiceover"))
+logger = get_logger(__name__)
 
 _tracer = None
 if os.getenv("LANGSMITH_API_KEY"):
     try:
         import langsmith
-
         _tracer = langsmith.Client()
         logger.info("LangSmith tracing enabled")
     except ImportError:
@@ -35,18 +35,15 @@ def _validate_audio(path: str) -> Tuple[bool, str]:
     audio_path = Path(path)
     if not audio_path.exists():
         return False, f"audio file missing: {path}"
-    if audio_path.stat().st_size == 0:
-        return False, f"audio file empty: {path}"
+    if audio_path.stat().st_size < 44:  # WAV header is 44 bytes minimum
+        return False, f"audio file too small ({audio_path.stat().st_size} bytes): {path}"
 
     result = subprocess.run(
         [
             "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "stream=codec_type,duration",
-            "-of",
-            "default=noprint_wrappers=1",
+            "-v", "error",
+            "-show_entries", "stream=codec_type,duration",
+            "-of", "default=noprint_wrappers=1",
             path,
         ],
         capture_output=True,
@@ -54,48 +51,10 @@ def _validate_audio(path: str) -> Tuple[bool, str]:
     )
     if result.returncode != 0:
         return False, f"ffprobe failed for {path}: {result.stderr.strip()}"
+    # WAV files sometimes report codec_type=audio without a duration line — that's fine
     if "codec_type=audio" not in result.stdout:
-        return False, f"ffprobe found no audio stream in {path}"
+        return False, f"ffprobe found no audio stream in {path}: {result.stdout.strip()}"
     return True, ""
-
-
-def _cuda_available() -> bool:
-    try:
-        import torch
-
-        return bool(torch.cuda.is_available())
-    except Exception as exc:
-        logger.warning(f"Could not check CUDA availability: {exc}")
-        return False
-
-
-def generate_dia2_tts(text: str, output_path: str) -> Tuple[bool, str]:
-    device = settings.DIA2_DEVICE.lower()
-    if device == "cuda" and not _cuda_available():
-        return False, "Dia2 configured for CUDA, but no CUDA device is available"
-
-    try:
-        from dia2 import Dia2, GenerationConfig, SamplingConfig
-    except Exception as exc:
-        return False, f"Dia2 import failed: {exc}"
-
-    try:
-        logger.info(f"Dia2: loading {settings.DIA2_MODEL} on {device} ({settings.DIA2_DTYPE})")
-        dia = Dia2.from_repo(settings.DIA2_MODEL, device=device, dtype=settings.DIA2_DTYPE)
-        config = GenerationConfig(
-            cfg_scale=float(settings.DIA2_CFG_SCALE),
-            audio=SamplingConfig(
-                temperature=float(settings.DIA2_TEMPERATURE),
-                top_k=50,
-            ),
-            use_cuda_graph=(device == "cuda"),
-        )
-        tagged_text = text if text.strip().startswith("[S") else f"[S1] {text}"
-        dia.generate(tagged_text, config=config, output_wav=output_path, verbose=False)
-        ok, reason = _validate_audio(output_path)
-        return ok, reason
-    except Exception as exc:
-        return False, f"Dia2 generation failed: {exc}"
 
 
 def _get_kokoro():
@@ -117,32 +76,102 @@ def _get_kokoro():
 
 def generate_kokoro_tts(text: str, output_path: str) -> Tuple[bool, str]:
     try:
+        import numpy as np
         import soundfile as sf
 
         kokoro = _get_kokoro()
-        samples, sample_rate = kokoro.create(
-            text,
-            voice=settings.KOKORO_VOICE,
-            speed=float(settings.KOKORO_SPEED),
-            lang=settings.KOKORO_LANG,
-        )
+        chunks = _split_text(text)
+        logger.info("Kokoro TTS", extra={"chunks": len(chunks), "text_chars": len(text)})
+
+        if len(chunks) == 1:
+            samples, sample_rate = kokoro.create(
+                chunks[0],
+                voice=settings.KOKORO_VOICE,
+                speed=float(settings.KOKORO_SPEED),
+                lang=settings.KOKORO_LANG,
+            )
+        else:
+            logger.info(f"Kokoro: splitting {len(text)} chars into {len(chunks)} chunks")
+            all_samples = []
+            sample_rate = 24000
+            silence = np.zeros(int(sample_rate * 0.25), dtype=np.float32)  # 250ms gap
+            for chunk in chunks:
+                s, sample_rate = kokoro.create(
+                    chunk,
+                    voice=settings.KOKORO_VOICE,
+                    speed=float(settings.KOKORO_SPEED),
+                    lang=settings.KOKORO_LANG,
+                )
+                all_samples.append(s)
+                all_samples.append(silence)
+            samples = np.concatenate(all_samples[:-1])  # drop trailing silence
+
         sf.write(output_path, samples, sample_rate)
         ok, reason = _validate_audio(output_path)
+        if ok:
+            log_file(logger, "written", output_path)
+        else:
+            logger.warning("Kokoro audio validation failed", extra={"reason": reason})
         return ok, reason
     except Exception as exc:
+        logger.error("Kokoro generation failed", extra={"error": str(exc)}, exc_info=True)
         return False, f"Kokoro generation failed: {exc}"
 
 
+def _split_text(text: str, max_chars: int = 400) -> List[str]:
+    """Split text into sentence-boundary chunks under max_chars."""
+    if len(text) <= max_chars:
+        return [text]
+
+    import re
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    chunks: List[str] = []
+    current = ""
+    for sentence in sentences:
+        if len(current) + len(sentence) + 1 <= max_chars:
+            current = f"{current} {sentence}".strip()
+        else:
+            if current:
+                chunks.append(current)
+            # If a single sentence exceeds max_chars, split on commas
+            if len(sentence) > max_chars:
+                parts = re.split(r'(?<=,)\s+', sentence)
+                sub = ""
+                for part in parts:
+                    if len(sub) + len(part) + 1 <= max_chars:
+                        sub = f"{sub} {part}".strip()
+                    else:
+                        if sub:
+                            chunks.append(sub)
+                        sub = part
+                if sub:
+                    current = sub
+                else:
+                    current = ""
+            else:
+                current = sentence
+    if current:
+        chunks.append(current)
+    return chunks or [text]
+
+
 def generate_espeak_fallback(text: str, output_path: str) -> Tuple[bool, str]:
+    """Emergency espeak-ng fallback. Uses espeak-ng (Debian package name)."""
     try:
-        subprocess.run(
-            ["espeak", "-w", output_path, text],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        ok, reason = _validate_audio(output_path)
-        return ok, reason
+        # Ensure .wav extension — espeak-ng requires it for -w flag
+        wav_path = output_path if output_path.endswith(".wav") else output_path + ".wav"
+        # Try espeak-ng first (Debian/Ubuntu), fall back to espeak
+        for binary in ("espeak-ng", "espeak"):
+            result = subprocess.run(
+                [binary, "-w", wav_path, text],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                ok, reason = _validate_audio(wav_path)
+                return ok, reason
+            logger.debug(f"{binary} not found or failed, trying next")
+        return False, "Neither espeak-ng nor espeak is available"
     except Exception as exc:
         return False, f"espeak generation failed: {exc}"
 
@@ -155,9 +184,7 @@ def _provider_output_path(temp_dir: Path, scene_id: int, provider: str) -> str:
 def _try_provider(provider: str, text: str, temp_dir: Path, scene_id: int) -> Tuple[bool, str, str]:
     output_path = _provider_output_path(temp_dir, scene_id, provider)
     normalized = provider.lower()
-    if normalized == "dia2":
-        ok, warning = generate_dia2_tts(text, output_path)
-    elif normalized == "kokoro":
+    if normalized == "kokoro":
         ok, warning = generate_kokoro_tts(text, output_path)
     elif normalized == "espeak" and settings.ALLOW_ESPEAK_FALLBACK:
         ok, warning = generate_espeak_fallback(text, output_path)
@@ -168,7 +195,10 @@ def _try_provider(provider: str, text: str, temp_dir: Path, scene_id: int) -> Tu
 
 @app.post("/generate", response_model=VoiceoverResponse)
 async def generate_voiceover(request: VoiceoverRequest):
-    logger.info(f"Generating voiceover for job {request.job_id}, scene {request.scene_id}")
+    set_log_context(job_id=request.job_id, scene_id=request.scene_id)
+    logger.info("Voiceover request", extra={"scene_id": request.scene_id,
+                                             "text_chars": len(request.narration_text),
+                                             "provider": settings.VOICEOVER_PROVIDER})
 
     run_id = str(uuid.uuid4())
     start_time = time.time()
@@ -200,17 +230,19 @@ async def generate_voiceover(request: VoiceoverRequest):
         if provider in attempted:
             continue
         attempted.append(provider)
-        ok, audio_path, warning = _try_provider(
-            provider,
-            request.narration_text,
-            temp_dir,
-            request.scene_id,
+        # Run blocking TTS in a thread so we don't stall the event loop
+        # (Kokoro ONNX inference is CPU-bound and can take several seconds)
+        ok, audio_path, warning = await asyncio.to_thread(
+            _try_provider, provider, request.narration_text, temp_dir, request.scene_id
         )
         if ok:
             fallback_used = provider != primary
             if warning:
-                logger.warning(warning)
-            logger.info(f"Voiceover scene {request.scene_id} produced by {provider}: {audio_path}")
+                logger.warning("Provider warning", extra={"provider": provider, "warning": warning})
+            logger.info("Voiceover produced", extra={"scene_id": request.scene_id,
+                                                      "provider": provider,
+                                                      "fallback_used": fallback_used,
+                                                      "audio_path": audio_path})
             if _tracer:
                 try:
                     _tracer.update_run(
@@ -233,14 +265,13 @@ async def generate_voiceover(request: VoiceoverRequest):
                 warning=warning or None,
             )
 
-        logger.warning(f"{provider} voiceover failed for scene {request.scene_id}: {warning}")
+        logger.warning("Provider failed", extra={"provider": provider,
+                                                   "scene_id": request.scene_id,
+                                                   "reason": warning})
 
     if settings.ALLOW_ESPEAK_FALLBACK and "espeak" not in attempted:
-        ok, audio_path, warning = _try_provider(
-            "espeak",
-            request.narration_text,
-            temp_dir,
-            request.scene_id,
+        ok, audio_path, warning = await asyncio.to_thread(
+            _try_provider, "espeak", request.narration_text, temp_dir, request.scene_id
         )
         if ok:
             logger.warning(f"Emergency espeak fallback used for scene {request.scene_id}")

@@ -1,9 +1,0 @@
-# This file is used internally by FFMPEG.
-file 'file:/workspace/temp/077793ea-e1e5-4167-af54-c7ab8c3cc6cd/render_scene_2/videos/scene_2/480p15/partial_movie_files/Scene2/1584795214_1866153256_223132457.mp4'
-file 'file:/workspace/temp/077793ea-e1e5-4167-af54-c7ab8c3cc6cd/render_scene_2/videos/scene_2/480p15/partial_movie_files/Scene2/4072820271_2574473371_3133734815.mp4'
-file 'file:/workspace/temp/077793ea-e1e5-4167-af54-c7ab8c3cc6cd/render_scene_2/videos/scene_2/480p15/partial_movie_files/Scene2/4072820271_3729714464_4146218129.mp4'
-file 'file:/workspace/temp/077793ea-e1e5-4167-af54-c7ab8c3cc6cd/render_scene_2/videos/scene_2/480p15/partial_movie_files/Scene2/4072820271_2574473371_3169204646.mp4'
-file 'file:/workspace/temp/077793ea-e1e5-4167-af54-c7ab8c3cc6cd/render_scene_2/videos/scene_2/480p15/partial_movie_files/Scene2/4072820271_537947641_1030155333.mp4'
-file 'file:/workspace/temp/077793ea-e1e5-4167-af54-c7ab8c3cc6cd/render_scene_2/videos/scene_2/480p15/partial_movie_files/Scene2/4072820271_2574473371_2569745137.mp4'
-file 'file:/workspace/temp/077793ea-e1e5-4167-af54-c7ab8c3cc6cd/render_scene_2/videos/scene_2/480p15/partial_movie_files/Scene2/4072820271_4284923446_463290095.mp4'
-file 'file:/workspace/temp/077793ea-e1e5-4167-af54-c7ab8c3cc6cd/render_scene_2/videos/scene_2/480p15/partial_movie_files/Scene2/4072820271_2872842549_3904258283.mp4'
