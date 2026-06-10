@@ -99,12 +99,15 @@ def compute_scene_timings(
         else:
             video_dur = probe_duration(render_path)
         
-        audio_dur = probe_duration(audio_paths[scene_id])
-        
+        # A scene may legitimately have no audio (e.g. TTS skipped). Tolerate it
+        # instead of crashing the whole composition with a KeyError.
+        audio_path = audio_paths.get(scene_id)
+        audio_dur = probe_duration(audio_path) if audio_path else 0.0
+
         records.append(SceneTimingRecord(
             scene_id=scene_id,
             render_path=render_path,
-            audio_path=audio_paths[scene_id],
+            audio_path=audio_path or "",
             actual_video_duration_seconds=video_dur,
             actual_audio_duration_seconds=audio_dur,
             start_time_seconds=round(accumulated, 3),

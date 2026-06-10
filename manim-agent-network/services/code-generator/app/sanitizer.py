@@ -1,6 +1,72 @@
 import ast
 from typing import List, Tuple, Optional
 
+# Scene base classes recognised by Manim CE.
+_SCENE_BASES = {
+    "Scene", "MovingCameraScene", "ThreeDScene", "ZoomedScene",
+    "VectorScene", "LinearTransformationScene", "ReconfigurableScene",
+    "SpecialThreeDScene",
+}
+
+# Modules/builtins whose presence in generated code is a security violation.
+FORBIDDEN_MODULES = {
+    "os", "subprocess", "socket", "sys", "importlib", "shutil",
+    "pathlib", "ctypes", "multiprocessing", "threading", "pty",
+    "signal", "resource", "fcntl", "tempfile", "http", "urllib",
+    "ftplib", "smtplib", "telnetlib", "xmlrpc",
+}
+FORBIDDEN_BUILTINS = {
+    "eval", "exec", "compile", "__import__", "open", "breakpoint",
+    "memoryview", "vars", "globals", "locals", "getattr", "setattr",
+    "delattr",
+}
+
+
+def check_manim_security(code: str) -> List[str]:
+    """Return a list of security violations found in generated Manim code.
+
+    Call this BEFORE sanitize_manim_code and before writing to disk.
+    An empty list means the code is safe to proceed.
+    """
+    violations: List[str] = []
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return violations  # SyntaxError caught elsewhere
+
+    class SecurityChecker(ast.NodeVisitor):
+        def visit_Import(self, node: ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root in FORBIDDEN_MODULES:
+                    violations.append(f"Forbidden module import: {alias.name}")
+            self.generic_visit(node)
+
+        def visit_ImportFrom(self, node: ast.ImportFrom):
+            if node.module:
+                root = node.module.split(".")[0]
+                if root in FORBIDDEN_MODULES:
+                    violations.append(f"Forbidden from-import: {node.module}")
+            self.generic_visit(node)
+
+        def visit_Call(self, node: ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_BUILTINS:
+                violations.append(f"Forbidden builtin call: {node.func.id}()")
+            # Also catch attribute-style: builtins.eval(...)
+            if (isinstance(node.func, ast.Attribute)
+                    and node.func.attr in FORBIDDEN_BUILTINS):
+                violations.append(f"Forbidden builtin call via attribute: {node.func.attr}()")
+            self.generic_visit(node)
+
+        def visit_Attribute(self, node: ast.Attribute):
+            # Catch os.system, subprocess.run, etc. accessed as attributes
+            if isinstance(node.value, ast.Name) and node.value.id in FORBIDDEN_MODULES:
+                violations.append(f"Forbidden module attribute access: {node.value.id}.{node.attr}")
+            self.generic_visit(node)
+
+    SecurityChecker().visit(tree)
+    return violations
+
 
 def sanitize_manim_code(code: str, scene_id: Optional[int] = None) -> Tuple[str, List[str]]:
     """Perform conservative AST-based sanitization of LLM-generated Manim CE code.
@@ -23,9 +89,30 @@ def sanitize_manim_code(code: str, scene_id: Optional[int] = None) -> Tuple[str,
     try:
         tree = ast.parse(code)
     except Exception as e:
-        # If parsing fails, return original code and report parse error as a warning
         warnings.append(f"AST parse failed: {e}")
         return code, warnings
+
+    # Pre-scan: find the primary scene class so we rename only that one.
+    # Prefer the first class that explicitly inherits from a known Scene base;
+    # fall back to the first class in the file.
+    primary_class_name: Optional[str] = None
+    if scene_id is not None:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                base_names = {
+                    b.id if isinstance(b, ast.Name) else
+                    (b.attr if isinstance(b, ast.Attribute) else "")
+                    for b in node.bases
+                }
+                if base_names & _SCENE_BASES:
+                    primary_class_name = node.name
+                    break
+        if primary_class_name is None:
+            # No explicit Scene subclass — rename first class in the file.
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef):
+                    primary_class_name = node.name
+                    break
 
     # Conservative replacements mapping
     name_map = {
@@ -81,7 +168,8 @@ def sanitize_manim_code(code: str, scene_id: Optional[int] = None) -> Tuple[str,
             return node
 
         def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
-            if scene_id is not None:
+            # Only rename the primary scene class; leave helper classes untouched.
+            if scene_id is not None and node.name == primary_class_name:
                 desired = f"Scene{scene_id}"
                 if node.name != desired:
                     warnings.append(f"Renamed class {node.name} -> {desired}")

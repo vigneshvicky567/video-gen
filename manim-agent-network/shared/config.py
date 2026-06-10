@@ -38,6 +38,8 @@ class Settings(BaseSettings):
 
     # ── Timeouts ──────────────────────────────────────────────────────────────
     SERVICE_HTTP_TIMEOUT_SECONDS: float = float(os.getenv("SERVICE_HTTP_TIMEOUT_SECONDS", "900"))
+    # Hard ceiling for a whole job; orchestrator aborts ainvoke past this.
+    JOB_WALLCLOCK_TIMEOUT_SECONDS: float = float(os.getenv("JOB_WALLCLOCK_TIMEOUT_SECONDS", "3600"))
 
     # ── Service URLs (Docker internal) ────────────────────────────────────────
     SCRIPT_WRITER_URL: str = os.getenv("SCRIPT_WRITER_URL", "http://script-writer:8001")

@@ -19,6 +19,7 @@ async def assemble_video(request: AssemblerRequest):
     os.makedirs(output_dir, exist_ok=True)
     final_output_path = os.path.join(output_dir, f"{request.job_id}_final.mp4")
     temp_dir = os.path.join(settings.WORKSPACE_DIR, "temp", request.job_id)
+    os.makedirs(temp_dir, exist_ok=True)
     merged_clips_paths = []
 
     try:

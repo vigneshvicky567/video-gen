@@ -44,10 +44,12 @@ class CompositionValidator(HTMLParser):
         if "data-composition-src" in attrs_dict:
             self.src_paths.append(attrs_dict["data-composition-src"])
 
-        # If element has data-start, it's a timed element — validate it
+        # If element has data-start, it's a timed element — validate it.
+        # Skip REQUIRED_ATTRS check for sub-composition roots (data-composition-id
+        # present) — these are inlined scene host divs, not clip elements.
         if "data-start" in attrs_dict or "data-duration" in attrs_dict:
             self.has_any_timed_element = True
-            if is_root_composition:
+            if is_root_composition or "data-composition-id" in attrs_dict:
                 return
             missing = [a for a in REQUIRED_ATTRS if a not in attrs_dict]
             if missing:

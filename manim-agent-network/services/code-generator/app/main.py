@@ -7,6 +7,7 @@ from shared.log import get_logger, set_log_context, timed_block, log_llm_call, l
 import os
 import sys
 from .sanitizer import sanitize_manim_code
+from .prompts import load as load_rules
 import re
 import json
 import uuid
@@ -67,60 +68,79 @@ def classify_scene(narration: str, visual: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 # HyperFrames HTML generation via LLM
 # ─────────────────────────────────────────────────────────────────────────────
-_HF_SYSTEM = """You are an expert HyperFrames HTML video composer creating educational explainer videos.
-HyperFrames renders HTML to MP4 frame-by-frame using Puppeteer + FFmpeg.
+# System prompt is the official HyperFrames skill rules + a thin task wrapper.
+# Rule edits live in services/code-generator/app/prompts/hf_rules.md, not here.
+_HF_SYSTEM = load_rules("hf_rules") + """
 
-VISUAL STYLE (match professional educational slides like 3Blue1Brown / StatQuest):
-- Canvas: 1920×1080px, WHITE background (#ffffff).
-- Typography: Inter or system-ui font. Bold black titles (48-64px). Body text #1a1a2e (36-42px).
-- Accent colors: #e63946 (red), #2196f3 (blue), #ff9800 (orange), #4caf50 (green).
-- Shapes: rounded rectangles with colored fills and white text for diagram nodes.
-- Arrows: thick SVG arrows (#e63946 or #1a1a2e) between diagram nodes.
-- Layout: generous whitespace, centered content, nothing touching edges.
-- Animations: GSAP fadeIn (opacity 0→1), slideUp (y: 40→0), stagger on lists/nodes.
+---
 
-REQUIRED STRUCTURE:
-- Root div: data-composition-id, data-start="0", data-duration, data-width="1920", data-height="1080".
-- Every timed element: unique id, class="clip", data-start, data-duration, data-track-index.
-- GSAP timeline registered as: window.__timelines["scene-N"] = tl (paused).
-- Load GSAP from: https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js
+# Your Task
 
-Output ONLY a complete <!DOCTYPE html> … </html> document, no markdown fences."""
+You are an expert HyperFrames HTML composer building educational-explainer scenes.
+Output ONLY a complete <!DOCTYPE html> … </html> document — no markdown fences,
+no commentary. Follow every rule above without exception. The composition
+will be inlined into a master 1920x1080 canvas, so the rendered scene MUST
+have a visible non-transparent background and visible foreground content.
+
+Visual baseline (override with explicit user-supplied palette when given):
+- Canvas: 1920×1080.
+- LAYOUT: every scene's content lives in a `.scene-content` container sized
+  `width:100%; height:100%; padding:80px 120px; display:flex; flex-direction:column;
+  gap:32px; box-sizing:border-box`. Position content with padding/flex — NEVER
+  `position:absolute; top:Npx` on a content container (it overflows). Reserve
+  `position:absolute` for decoratives only. Build the static end-state layout
+  first, THEN add gsap.from() entrances.
+- BACKGROUND: NOT flat pure white. Use a tinted near-neutral (e.g. #f4f1ea warm
+  or #0e1116 dark) plus ONE depth layer (soft radial glow or subtle grain) and
+  ONE accent hue used at full saturation on the focal element. Pure #ffffff/#000
+  reads as "nothing loaded". Keep ONE palette across ALL scenes.
+- TYPOGRAPHY (video scale, not web): headlines 64-110px, body 28-42px, labels
+  18-24px. Pair a serif with a sans (NOT two sans). Extreme weight contrast
+  (300 vs 900). Do NOT use Inter, Roboto, Poppins, Open Sans, Lato, Nunito —
+  they are instant AI-design tells. Prefer system serif ("Georgia","Times New
+  Roman",serif) paired with a system sans, or a bundled .woff2. Tabular-nums on
+  stacked numbers. Let text wrap via max-width — never <br>.
+- MOTION: stagger multi-element reveals (`stagger:{each:0.08, from:"center"}`),
+  set one motion signature via `gsap.timeline({defaults:{ease:"power3.out",
+  duration:0.6}})`, vary eases (≥3/scene), use autoAlpha not opacity. Entrance
+  animations only — NO exit animations except the final scene.
+- CONTRAST: on-screen text must hit WCAG 4.5:1 against whatever is behind it.
+- GSAP CDN: https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"""
 
 def _build_hf_prompt(scene_id: int, narration: str, visual: str, duration: int) -> str:
-    return f"""Create a HyperFrames HTML scene for an educational explainer video.
+    """User-prompt body. Style + structure rules come from the system prompt
+    (hf_rules.md). This message only carries scene-specific values + the two
+    template strings the LLM must emit verbatim with the right scene_id."""
+    return f"""Create a HyperFrames HTML scene per the system rules.
 
 Scene ID: {scene_id}
 Total duration: {duration} seconds
-Narration (will be spoken): {narration}
+Narration (spoken, NOT on-screen): {narration}
 Visual description: {visual}
 
-DESIGN REQUIREMENTS (match the style of StatQuest / 3Blue1Brown slides):
-1. WHITE background (#ffffff). All text in dark colors (#1a1a2e or #111).
-2. BOLD title at top center (font-size: 56px, font-weight: 900, color: #1a1a2e).
-   - Highlight 1-2 key words with a colored span (e.g. color:#e63946).
-3. Main content area: centered, max-width 1600px, vertically centered in remaining space.
-4. For DIAGRAMS (flow charts, concept maps):
-   - Use rounded rectangles (border-radius:16px) with colored backgrounds and white text.
-   - Connect nodes with thick SVG arrows (stroke:#e63946, stroke-width:6, marker-end arrowhead).
-   - Animate nodes in with GSAP stagger: tl.from(".node", {{opacity:0, y:30, stagger:0.15}})
-5. For LISTS / BULLET POINTS:
-   - Large colored bullet circles (40px) with text beside them.
-   - Stagger animate each item: tl.from(".item", {{opacity:0, x:-40, stagger:0.2}})
-6. For FORMULAS / EQUATIONS:
-   - Display in a light gray pill (#f0f0f0 background, border-radius:12px, padding:24px 48px).
-   - Use MathJax or styled HTML spans for formula parts.
-7. NO lower-third text bar — narration is handled by audio, not on-screen text.
-8. Root wrapper:
-   <div id="composition" data-composition-id="scene-{scene_id}" data-start="0" data-duration="{duration}" data-width="1920" data-height="1080" style="background:#ffffff;">
-9. GSAP registration:
-   const tl = gsap.timeline({{ paused: true }});
-   window.__timelines = window.__timelines || {{}};
-   window.__timelines["scene-{scene_id}"] = tl;
-   tl.from("#title-{scene_id}", {{opacity:0, y:-30, duration:0.6}});
-   // then animate content elements
+REQUIRED root wrapper (copy id literally — the compositor namespaces it later):
+  <div id="composition"
+       data-composition-id="scene-{scene_id}"
+       data-start="0"
+       data-duration="{duration}"
+       data-width="1920"
+       data-height="1080"
+       style="position:relative;width:1920px;height:1080px;background:#ffffff;overflow:hidden;">
 
-Output ONLY the complete HTML document."""
+REQUIRED GSAP registration block (paste literally with the right scene_id):
+  const tl = gsap.timeline({{ paused: true }});
+  window.__timelines = window.__timelines || {{}};
+  window.__timelines["scene-{scene_id}"] = tl;
+  // then add tl.from(...) / tl.to(...) calls for each animated element
+
+Both `body` and the `#composition` div MUST have an explicit non-transparent
+background (default white #ffffff) so the rendered frame is visible.
+
+Do NOT include a lower-third caption — narration is audio-only.
+Do NOT use @font-face — use the system-ui / Inter / Arial stack.
+Do NOT load external scripts other than the GSAP CDN.
+
+Output ONLY the complete <!DOCTYPE html>...</html> document."""
 
 
 def _extract_html(text: str) -> str:
@@ -200,103 +220,88 @@ async def _generate_hyperframes(request, run_id: str, start_time: float):
 # ─────────────────────────────────────────────────────────────────────────────
 # Manim Python code generation via LLM
 # ─────────────────────────────────────────────────────────────────────────────
-_MANIM_SYSTEM = "You are an expert Manim CE developer. Always respond with valid JSON containing the python_code key."
+# System prompt is the official Manim CE skill rules + a thin task wrapper.
+# Rule edits live in services/code-generator/app/prompts/manim_rules.md.
+_MANIM_SYSTEM = load_rules("manim_rules") + """
+
+---
+
+# Your Task
+
+You are an expert Manim Community Edition animator. Always respond with valid
+JSON containing a single `python_code` key whose value is the complete scene
+file. Follow every rule above without exception — the validator runs the code
+through `manim render` and a forbidden-API sanitizer; both will reject
+violations.
+
+Pipeline-specific contract:
+- Background MUST be set at the top of `construct()` with
+  `config.background_color = WHITE`. The white canvas is provided by the
+  HyperFrames composition layer; never render white text/strokes on it.
+- Use rich dark colors for math: axes `"#1a1a2e"`, curves `"#e63946"` or
+  `"#2196f3"`, dots `"#ff9800"`.
+- The class name MUST be exactly `Scene{N}` (one integer the caller fills in).
+- No external asset loads, no `SVGMobject("...")`, no web calls."""
+
+
+_MANIM_FEW_SHOT = (
+    '{"python_code": "from manim import *\\n\\nclass Scene1(Scene):\\n'
+    '    def construct(self):\\n'
+    '        config.background_color = WHITE\\n'
+    '        axes = Axes(x_range=[-3,3], y_range=[0,9], x_length=8, y_length=5,'
+    ' axis_config={\\\"color\\\": \\\"#1a1a2e\\\", \\\"stroke_width\\\": 3})'
+    '.move_to(DOWN*0.3)\\n'
+    '        labels = axes.get_axis_labels(x_label=\\\"x\\\", y_label=\\\"y\\\")'
+    '.set_color(BLACK)\\n'
+    '        curve = axes.plot(lambda x: x**2, color=\\\"#e63946\\\", stroke_width=4)\\n'
+    '        self.play(Create(axes), Write(labels))\\n'
+    '        self.play(Create(curve), run_time=2)\\n'
+    '        dot = Dot(axes.c2p(-2, 4), color=\\\"#ff9800\\\", radius=0.12)\\n'
+    '        self.play(FadeIn(dot))\\n'
+    '        self.play(MoveAlongPath(dot, curve), run_time=2, rate_func=there_and_back)\\n'
+    '        self.wait(1)\\n"}'
+)
+
 
 def _build_manim_prompt(scene: object, error_log: str = None, previous_code: str = None) -> str:
+    """User-prompt body. Style + forbidden-API rules come from the system
+    prompt (manim_rules.md). This message only carries scene-specific values
+    and a class-name reminder."""
     sid = scene.scene_id
+
     if error_log and previous_code:
-        return f"""
-You are an expert Manim CE animator. Fix the code below — it failed to render.
+        return f"""Fix this Manim CE scene per the system rules — it failed to render.
 
 PREVIOUS CODE:
 ```python
 {previous_code}
 ```
 
-ERROR LOG:
-{error_log}
+ERROR LOG (last 600 chars):
+{error_log[-600:]}
 
-HARD RULES:
-1. TRANSPARENT BACKGROUND: config.background_color = WHITE and set_background_stroke_width(0).
-   All text/strokes must use DARK colors (BLACK, DARK_BLUE, DARK_GRAY) — never WHITE text.
-2. No overlapping text. Use VGroup + arrange().
-3. Max 3 lines per Tex block, 4-6 words per segment.
-4. Title at top (.to_edge(UP)), content centered.
-5. After building multi-part layouts: full=VGroup(*all); full.scale_to_fit_width(12); full.move_to(ORIGIN)
-6. FORBIDDEN — these do NOT exist in Manim CE, never use them:
-   - `SVGMobject("anything")` — no bundled SVG assets; use Circle, Square, Rectangle, Polygon, Arrow
-   - `SVGCircle`, `VGraph` — use `Circle`, `VGroup`
-   - `Square.make_square_from_line()`, `Line.get_unit_normal()`
-   - `.set_fill_by_checkerboard()`
-   - `.animate.rotate(angle, axis=...)` — use `.rotate()` directly
-   - `there_and_back_once` — use `there_and_back` instead
-   - `MoveAlongPath(Dot(curve, ...), curve)` — use `Dot(curve.get_start(), ...)` then `MoveAlongPath(dot, curve)`
-   - `line_intersection(p1, p2)` — use `(p1 + p2) / 2`
-   - `rate_func=` as kwarg to `.animate(...)` — pass it to `self.play()` instead
-   - `Circle(arc_length=...)` or `Arc(arc_length=...)` — use `Circle(radius=...)` or `Arc(radius=..., angle=...)`
-   - `ShowCreationThenFadeOut` — removed; use `self.play(Create(obj)); self.play(FadeOut(obj))`
-   - `ShowCreation` — REMOVED; use `Create` instead
-   - `rate_functions.ease_out` — use `rate_functions.ease_out_sine`, `smooth`, or `linear`
-   - `DARK_RED`, `DARK_BLUE` — NOT valid constants; use hex `"#8B0000"`, `"#00008B"` or `RED_E`, `BLUE_E`
-   - `LIGHT_GRAY`, `DARK_GRAY` — use `GRAY_A`...`GRAY_E` or hex strings
-   VALID colors: WHITE, BLACK, RED, GREEN, BLUE, YELLOW, ORANGE, PURPLE, PINK, TEAL, GOLD,
-   and variants RED_A...RED_E, BLUE_A...BLUE_E, GREEN_A...GREEN_E, GRAY_A...GRAY_E.
-   VALID rate_functions: linear, smooth, rush_into, rush_from, there_and_back,
-   ease_in_sine, ease_out_sine, ease_in_out_sine, ease_in_quad, ease_out_quad.
-7. Class name MUST be Scene{sid}.
+Class name MUST stay `Scene{sid}`. The error often comes from one of the
+forbidden APIs in the system rules — re-check those first.
 
-Return ONLY: {{"python_code": "..."}}
-"""
-    return f"""
-You are an expert Manim CE animator. Create a clean mathematical animation with a TRANSPARENT background.
+Return ONLY: {{"python_code": "..."}}"""
+
+    return f"""Create a Manim CE scene per the system rules.
 
 SCENE DETAILS:
-Narration: {scene.narration_text}
-Visual:    {scene.visual_description}
-Scene #:   {sid}
+Scene #:    {sid}
+Narration:  {scene.narration_text}
+Visual:     {scene.visual_description}
 
-HARD RULES:
-1. TRANSPARENT BACKGROUND — set at the top of construct():
-   config.background_color = WHITE
-   All strokes, text, and fills must use DARK colors (BLACK, DARK_BLUE, "#1a1a2e", DARK_GRAY, "#e63946" for accents).
-   NEVER use WHITE for any visible element — it will be invisible on the white canvas.
-2. Import: `from manim import *`
-3. Class name MUST be `Scene{sid}` (subclass of Scene).
-4. No overlapping text — use VGroup + arrange() / next_to() / to_edge().
-5. Sequential storyboard: Formula/Object → Labels → Motion. No title text (title is handled by HyperFrames layer).
-6. After multi-part layouts: full=VGroup(*all); full.scale_to_fit_width(12); full.move_to(ORIGIN)
-7. Font sizes 28-48. Use wait() for pacing.
-8. FORBIDDEN — these do NOT exist in Manim CE, never use them:
-   - `SVGMobject("anything")` — no bundled SVG assets exist; use primitive shapes (Circle, Square, Rectangle, Polygon, Arrow, etc.)
-   - `SVGCircle`, `VGraph` — these don't exist; use `Circle`, `VGroup`
-   - `Square.make_square_from_line()`, `Line.get_unit_normal()`
-   - `.set_fill_by_checkerboard()`
-   - `.animate.rotate(angle, axis=...)` — use `.rotate()` directly
-   - `there_and_back_once` — use `there_and_back` instead
-   - `MoveAlongPath(Dot(curve, ...), curve)` — `Dot()` takes a point, not a curve;
-     use `Dot(curve.get_start(), ...)` and then `MoveAlongPath(dot, curve)`
-   - `line_intersection(p1, p2)` — does not exist; compute midpoint as `(p1 + p2) / 2`
-   - `rate_func=` as a kwarg to `.animate(...)` — pass it to `self.play()` instead
-   - `Circle(arc_length=...)` or `Arc(arc_length=...)` — no such param; use `Circle(radius=...)` or `Arc(radius=..., angle=...)`
-   - `ShowCreationThenFadeOut` — removed; use `self.play(Create(obj)); self.play(FadeOut(obj))` instead
-   - `ShowCreation` — REMOVED; use `Create` instead
-   - `rate_functions.ease_out` — use `rate_functions.ease_out_sine`, `smooth`, or `linear`
-   - `DARK_RED`, `DARK_BLUE` — NOT valid constants; use hex `"#8B0000"`, `"#00008B"` or `RED_E`, `BLUE_E`
-   - `LIGHT_GRAY`, `DARK_GRAY` — use `GRAY_A`...`GRAY_E` or hex strings
-   VALID colors: WHITE, BLACK, RED, GREEN, BLUE, YELLOW, ORANGE, PURPLE, PINK, TEAL, GOLD,
-   and variants RED_A...RED_E, BLUE_A...BLUE_E, GREEN_A...GREEN_E, GRAY_A...GRAY_E.
-   VALID rate_functions: linear, smooth, rush_into, rush_from, there_and_back,
-   ease_in_sine, ease_out_sine, ease_in_out_sine, ease_in_quad, ease_out_quad.
-9. No external assets or web calls.
-10. Use rich colors for math objects: axes in "#1a1a2e", curves in "#e63946" or "#2196f3", dots in "#ff9800".
+Class name MUST be exactly `Scene{sid}` (subclass of `Scene`).
+No on-screen title text (the HyperFrames layer adds the scene title).
+First line of `construct()`: `config.background_color = WHITE`.
 
-FEW-SHOT EXAMPLE (transparent bg, dark strokes, correct MoveAlongPath):
+FEW-SHOT EXAMPLE (valid output for a different scene):
 ```json
-{{"python_code": "from manim import *\\n\\nclass Scene1(Scene):\\n    def construct(self):\\n        config.background_color = WHITE\\n        axes = Axes(x_range=[-3,3], y_range=[0,9], x_length=8, y_length=5, axis_config={{\\\"color\\\": \\\"#1a1a2e\\\", \\\"stroke_width\\\": 3}}).move_to(DOWN*0.3)\\n        labels = axes.get_axis_labels(x_label=\\\"x\\\", y_label=\\\"y\\\").set_color(BLACK)\\n        curve = axes.plot(lambda x: x**2, color=\\\"#e63946\\\", stroke_width=4)\\n        self.play(Create(axes), Write(labels))\\n        self.play(Create(curve), run_time=2)\\n        dot = Dot(axes.c2p(-2, 4), color=\\\"#ff9800\\\", radius=0.12)\\n        self.play(FadeIn(dot))\\n        self.play(MoveAlongPath(dot, curve), run_time=2, rate_func=there_and_back)\\n        self.wait(1)\\n"}}
+{_MANIM_FEW_SHOT}
 ```
 
-Return ONLY: {{"python_code": "..."}}
-"""
+Return ONLY: {{"python_code": "..."}}"""
 
 
 async def _generate_manim(request, run_id: str, start_time: float):

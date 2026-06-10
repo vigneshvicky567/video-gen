@@ -16,8 +16,24 @@ app = FastAPI(title="Validator Service")
 app.add_middleware(make_request_logging_middleware("validator"))
 logger = get_logger(__name__)
 
-# Cap concurrent manim subprocesses; prevents CPU thrash under asyncio.gather fanout.
-_RENDER_SEMAPHORE = asyncio.Semaphore(max(1, (os.cpu_count() or 2) // 2))
+# Initialised in _on_startup inside the running event loop (Python 3.10+ safe).
+_RENDER_SEMAPHORE: asyncio.Semaphore = None  # type: ignore[assignment]
+
+
+def _run_manim_subprocess(cmd: list, timeout_s: int):
+    """Run manim in a blocking thread; kill the child process on timeout.
+
+    Returns (returncode, stdout, stderr). Raises subprocess.TimeoutExpired
+    after killing the child so the caller can distinguish timeout from error.
+    """
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout_s)
+        return proc.returncode, stdout, stderr
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        raise
 
 # Render budget bounds.
 _TIMEOUT_FLOOR_S = 90
@@ -122,8 +138,23 @@ def validate_hyperframes(code_path: str) -> tuple:
         return False, "", str(e)
 
 
+_FORBIDDEN_MODULES = {
+    "os", "subprocess", "socket", "sys", "importlib", "shutil",
+    "pathlib", "ctypes", "multiprocessing", "threading", "pty",
+    "signal", "resource", "fcntl", "tempfile", "http", "urllib",
+    "ftplib", "smtplib", "telnetlib", "xmlrpc",
+}
+_FORBIDDEN_BUILTINS = {
+    "eval", "exec", "compile", "__import__", "open", "breakpoint",
+    "memoryview", "globals", "locals",
+}
+
+
 def _preflight_ast_checks(source: str, scene_id: int) -> tuple:
     """Run lightweight AST checks to detect deprecated/forbidden constructs.
+
+    Includes a security gate that blocks dangerous modules and builtins before
+    the code is ever passed to manim render.
 
     Returns (passed: bool, error_message: str).
     """
@@ -134,23 +165,42 @@ def _preflight_ast_checks(source: str, scene_id: int) -> tuple:
         return False, f"SyntaxError at line {e.lineno}: {e.msg}"
 
     class Checker(ast.NodeVisitor):
+        def visit_Import(self, node: ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root in _FORBIDDEN_MODULES:
+                    issues.append(f"Security: forbidden module import '{alias.name}'")
+            self.generic_visit(node)
+
         def visit_ImportFrom(self, node: ast.ImportFrom):
             if node.module and ("manimlib" in node.module or "manimgl" in node.module):
                 issues.append(f"Legacy import detected: from {node.module} - use 'from manim import *' instead")
+            if node.module:
+                root = node.module.split(".")[0]
+                if root in _FORBIDDEN_MODULES:
+                    issues.append(f"Security: forbidden from-import '{node.module}'")
             self.generic_visit(node)
 
         def visit_Name(self, node: ast.Name):
-            forbidden = {"SVGMobject", "SVGCircle", "ShowCreation", "ShowCreationThenFadeOut", "VGraph", "there_and_back_once"}
-            if node.id in forbidden:
+            deprecated = {"SVGMobject", "SVGCircle", "ShowCreation", "ShowCreationThenFadeOut", "VGraph", "there_and_back_once"}
+            if node.id in deprecated:
                 issues.append(f"Forbidden identifier used: {node.id}")
+            if node.id in _FORBIDDEN_BUILTINS:
+                issues.append(f"Security: forbidden builtin '{node.id}'")
+            self.generic_visit(node)
+
+        def visit_Call(self, node: ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in _FORBIDDEN_BUILTINS:
+                issues.append(f"Security: forbidden builtin call '{node.func.id}()'")
             self.generic_visit(node)
 
         def visit_Attribute(self, node: ast.Attribute):
-            # Detect rate_functions.ease_out usage
             if isinstance(node.value, ast.Name):
                 key = f"{node.value.id}.{node.attr}"
                 if key == "rate_functions.ease_out":
                     issues.append("Use 'rate_functions.ease_out_sine' instead of 'rate_functions.ease_out'")
+                if node.value.id in _FORBIDDEN_MODULES:
+                    issues.append(f"Security: forbidden module attribute access '{key}'")
             self.generic_visit(node)
 
     Checker().visit(tree)
@@ -218,8 +268,9 @@ def _warmup_latex() -> None:
 
 @app.on_event("startup")
 async def _on_startup() -> None:
+    global _RENDER_SEMAPHORE
+    _RENDER_SEMAPHORE = asyncio.Semaphore(max(1, (os.cpu_count() or 2) // 2))
     _run_self_test()
-    # Warmup synchronously but in a thread so we don't block uvicorn loop forever.
     await asyncio.to_thread(_warmup_latex)
 
 @app.post("/validate", response_model=ValidatorResponse)
@@ -355,10 +406,16 @@ async def _validate_manim(request, run_id, start_time):
         async with _RENDER_SEMAPHORE:
             with timed_block(logger, "manim render", scene_id=request.scene_id):
                 logger.info("Running manim", extra={"cmd": " ".join(cmd), "timeout_s": timeout_s})
-                process = await asyncio.to_thread(
-                    subprocess.run, cmd,
-                    capture_output=True, text=True, timeout=timeout_s,
+                returncode, stdout, stderr = await asyncio.to_thread(
+                    _run_manim_subprocess, cmd, timeout_s,
                 )
+
+        class _Result:
+            pass
+        process = _Result()
+        process.returncode = returncode
+        process.stdout = stdout
+        process.stderr = stderr
         log_subprocess(logger, cmd, process, label="manim", scene_id=request.scene_id)
 
         if process.returncode == 0:

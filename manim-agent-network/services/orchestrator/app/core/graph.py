@@ -60,6 +60,8 @@ async def code_generator_node(state: LangGraphState):
         retry_counts = state.get("retry_counts", {})
         new_code_paths = dict(state.get("code_paths", {}))
         new_previous_code = dict(state.get("previous_code", {}))
+        new_retry_counts = dict(retry_counts)
+        new_error_logs = dict(state.get("error_logs", {}))
 
         # Collect scenes that need (re)generation
         scenes_to_generate = [
@@ -81,6 +83,7 @@ async def code_generator_node(state: LangGraphState):
         for scene_id, code_path, error in results:
             if code_path:
                 new_code_paths[scene_id] = code_path
+                new_error_logs.pop(scene_id, None)
                 # Read generated code for retry context
                 try:
                     with open(code_path, "r") as f:
@@ -88,11 +91,18 @@ async def code_generator_node(state: LangGraphState):
                 except Exception:
                     pass
             else:
+                # Count code-gen failures against the retry cap. Without this the
+                # scene never enters code_paths, the validator never bumps its
+                # count, and validation_router loops back forever (GraphRecursionError).
                 logger.error(f"Scene {scene_id} code generation failed: {error}")
+                new_retry_counts[scene_id] = new_retry_counts.get(scene_id, 0) + 1
+                new_error_logs[scene_id] = error or "code generation failed"
 
         return {
             "code_paths": new_code_paths,
             "previous_code": new_previous_code,
+            "retry_counts": new_retry_counts,
+            "error_logs": new_error_logs,
             "status": "code_generation"
         }
     except Exception as e:
@@ -187,6 +197,17 @@ def validation_router(state: LangGraphState) -> Literal["code_generator_node", "
         return "voiceover_node"
     elif needs_retry:
         return "code_generator_node"
+    elif render_paths:
+        # Graceful degradation: some scenes exhausted their retries, but at least
+        # one rendered. Drop the unrenderable scenes and assemble what we have
+        # instead of failing the entire job. Downstream nodes key off render_paths,
+        # so dropped scenes are naturally excluded from voiceover/timing/assembly.
+        failed = sorted(s["scene_id"] for s in script["scenes"] if s["scene_id"] not in render_paths)
+        logger.warning(
+            f"Proceeding with {len(render_paths)}/{len(script['scenes'])} scenes; "
+            f"dropping unrenderable scenes {failed}"
+        )
+        return "voiceover_node"
     else:
         return "failed"
 
@@ -212,29 +233,6 @@ async def _generate_voiceover(scene: dict, job_id: str, existing: dict) -> tuple
         return scene_id, None
 
 
-async def voiceover_node(state: LangGraphState):
-    logger.info("Executing Voiceover Node (PARALLEL)")
-    try:
-        job_id = state["job_id"]
-        script = state["script"]
-        existing = state.get("audio_paths", {})
-
-        tasks = [_generate_voiceover(scene, job_id, existing) for scene in script["scenes"]]
-        results = await asyncio.gather(*tasks, return_exceptions=False)
-
-        new_audio_paths = dict(existing)
-        for scene_id, audio_path in results:
-            if audio_path:
-                new_audio_paths[scene_id] = audio_path
-            else:
-                return {"status": "failed", "overall_error": f"Voiceover failed for scene {scene_id}"}
-
-        return {"audio_paths": new_audio_paths, "status": "voiceover"}
-    except Exception as e:
-        logger.error(f"Voiceover node failed: {e}")
-        return {"status": "failed", "overall_error": str(e)}
-
-
 async def voiceover_and_images_node(state: LangGraphState):
     """Run voiceover and image fetching in parallel — they're independent."""
     logger.info("Executing Voiceover + Image Fetcher in PARALLEL")
@@ -243,11 +241,16 @@ async def voiceover_and_images_node(state: LangGraphState):
         script = state["script"]
         existing_audio = state.get("audio_paths", {})
 
-        # Voiceover tasks — all scenes in parallel
-        vo_tasks = [_generate_voiceover(scene, job_id, existing_audio) for scene in script["scenes"]]
+        # Only process scenes that actually rendered — dropped (unrenderable)
+        # scenes are absent from render_paths and must not get voiceover/images.
+        render_paths = state.get("render_paths", {})
+        survivor_scenes = [s for s in script["scenes"] if s["scene_id"] in render_paths]
+
+        # Voiceover tasks — all surviving scenes in parallel
+        vo_tasks = [_generate_voiceover(scene, job_id, existing_audio) for scene in survivor_scenes]
 
         # Image fetcher task
-        img_request = ImageFetcherRequest(job_id=job_id, scenes=script["scenes"])
+        img_request = ImageFetcherRequest(job_id=job_id, scenes=survivor_scenes)
         img_task = _post(f"{settings.IMAGE_FETCHER_URL}/fetch", img_request.model_dump())
 
         # Run both concurrently
@@ -257,13 +260,22 @@ async def voiceover_and_images_node(state: LangGraphState):
             return_exceptions=False
         )
 
-        # Process voiceover results
+        # Collect ALL voiceover results before deciding failure — a single
+        # transient TTS error must not discard the audio that did succeed.
         new_audio_paths = dict(existing_audio)
+        failed_scenes = []
         for scene_id, audio_path in vo_results:
             if audio_path:
                 new_audio_paths[scene_id] = audio_path
             else:
-                return {"status": "failed", "overall_error": f"Voiceover failed for scene {scene_id}"}
+                failed_scenes.append(scene_id)
+
+        if failed_scenes:
+            return {
+                "audio_paths": new_audio_paths,
+                "status": "failed",
+                "overall_error": f"Voiceover failed for scenes: {failed_scenes}",
+            }
 
         # Process image results
         merged_image_paths = {**state.get("image_paths", {})}
@@ -277,26 +289,6 @@ async def voiceover_and_images_node(state: LangGraphState):
         }
     except Exception as e:
         logger.error(f"Voiceover+Images node failed: {e}")
-        return {"status": "failed", "overall_error": str(e)}
-
-
-async def image_fetcher_node(state: LangGraphState):
-    logger.info("Executing Image Fetcher Node")
-    try:
-        request = ImageFetcherRequest(
-            job_id=state["job_id"],
-            scenes=state["script"]["scenes"]
-        )
-        res = await _post(
-            f"{settings.IMAGE_FETCHER_URL}/fetch",
-            request.model_dump()
-        )
-        merged_image_paths = {**state.get("image_paths", {})}
-        for k, v in res["image_paths"].items():
-            merged_image_paths[int(k)] = v
-        return {"image_paths": merged_image_paths, "status": "image_fetching"}
-    except Exception as e:
-        logger.error(f"Image Fetcher failed: {e}")
         return {"status": "failed", "overall_error": str(e)}
 
 
@@ -336,6 +328,8 @@ workflow.add_conditional_edges(
 workflow.add_edge("code_generator_node", "validator_node")
 workflow.add_conditional_edges("validator_node", validation_router,
     {
+        # "voiceover_node" is the router's logical key, not a function — it maps
+        # to the real voiceover_and_images_node target below.
         "code_generator_node": "code_generator_node",
         "voiceover_node":      "voiceover_and_images_node",
         "failed":              "failed"
