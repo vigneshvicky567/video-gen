@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import re
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -39,107 +40,14 @@ def _relative_to_composition(path: str, comp_dir: Path) -> str:
         return Path(path).as_posix()
 
 
-def _inline_hyperframes_scene(html_path: str, scene_id: int) -> str:
-    """Read a HyperFrames scene HTML file and return the body's content,
-    rewritten so its root composition id and timeline registration key are
-    namespaced to the scene_id (so multiple scenes coexist in one master DOM).
-    """
-    raw = Path(html_path).read_text(encoding="utf-8")
-
-    # Extract <head>...</head> so we can pull <style> and <script> tags out.
-    head_styles: List[str] = []
-    head_scripts: List[str] = []
-    head_match = re.search(r"<head[^>]*>(.*?)</head>", raw, re.IGNORECASE | re.DOTALL)
-    if head_match:
-        head_inner = head_match.group(1)
-        head_styles = re.findall(
-            r"<style[^>]*>.*?</style>", head_inner, re.IGNORECASE | re.DOTALL
-        )
-        head_scripts = re.findall(
-            r"<script\b[^>]*>.*?</script>", head_inner, re.IGNORECASE | re.DOTALL
-        )
-
-    # Extract body inner HTML using a tolerant regex.
-    body_inner = ""
-    body_match = re.search(
-        r"<body[^>]*>(.*?)</body>", raw, re.IGNORECASE | re.DOTALL
-    )
-    if body_match:
-        body_inner = body_match.group(1)
-    else:
-        # Fallback: extract first <div id="composition" ...>...</div>
-        div_match = re.search(
-            r'<div\s+[^>]*id\s*=\s*["\']composition["\'][^>]*>.*?</div>',
-            raw,
-            re.IGNORECASE | re.DOTALL,
-        )
-        if div_match:
-            body_inner = div_match.group(0)
-        else:
-            body_inner = raw
-
-    # Strip stray DOCTYPE / html / head / body tags (defensive).
-    body_inner = re.sub(r"<!DOCTYPE[^>]*>", "", body_inner, flags=re.IGNORECASE)
-    body_inner = re.sub(r"</?html[^>]*>", "", body_inner, flags=re.IGNORECASE)
-    body_inner = re.sub(
-        r"<head[^>]*>.*?</head>", "", body_inner, flags=re.IGNORECASE | re.DOTALL
-    )
-    body_inner = re.sub(r"</?body[^>]*>", "", body_inner, flags=re.IGNORECASE)
-
-    # Rewrite root composition id.
-    new_id = f"composition-scene-{scene_id}"
-    body_inner = body_inner.replace('id="composition"', f'id="{new_id}"')
-    body_inner = body_inner.replace("id='composition'", f"id='{new_id}'")
-
-    # Rewrite window.__timelines["scene-N"] keys to the canonical scene id.
-    canonical_key = f'"scene-{scene_id}"'
-    canonical_key_single = f"'scene-{scene_id}'"
-
-    def _rewrite_timeline_double(match: "re.Match[str]") -> str:
-        n = match.group(1)
-        if n == str(scene_id):
-            return match.group(0)
-        return f'window.__timelines[{canonical_key}]'
-
-    def _rewrite_timeline_single(match: "re.Match[str]") -> str:
-        n = match.group(1)
-        if n == str(scene_id):
-            return match.group(0)
-        return f"window.__timelines[{canonical_key_single}]"
-
-    body_inner = re.sub(
-        r'window\.__timelines\[\s*"scene-(\d+)"\s*\]',
-        _rewrite_timeline_double,
-        body_inner,
-    )
-    body_inner = re.sub(
-        r"window\.__timelines\[\s*'scene-(\d+)'\s*\]",
-        _rewrite_timeline_single,
-        body_inner,
-    )
-
-    # Bare ["scene-N"] patterns (defensive).
-    def _rewrite_bare_double(match: "re.Match[str]") -> str:
-        n = match.group(1)
-        if n == str(scene_id):
-            return match.group(0)
-        return f'[{canonical_key}]'
-
-    def _rewrite_bare_single(match: "re.Match[str]") -> str:
-        n = match.group(1)
-        if n == str(scene_id):
-            return match.group(0)
-        return f"[{canonical_key_single}]"
-
-    body_inner = re.sub(r'\[\s*"scene-(\d+)"\s*\]', _rewrite_bare_double, body_inner)
-    body_inner = re.sub(r"\[\s*'scene-(\d+)'\s*\]", _rewrite_bare_single, body_inner)
-
-    # Compose: head <style> tags BEFORE body content; head <script> tags AFTER.
-    parts: List[str] = []
-    parts.extend(head_styles)
-    parts.append(body_inner)
-    parts.extend(head_scripts)
-    return "\n".join(parts)
+# NOTE: HyperFrames scenes are mounted as sub-composition clips via
+# data-composition-src. The HyperFrames compiler inlines them itself
+# (core/src/compiler/inlineSubCompositions.ts): it scopes each scene's CSS
+# to its composition root, wraps each scene script in an isolated closure
+# (no top-level `const` collisions between scenes), drops the scene's own
+# data-start="0" root, and auto-nests window.__timelines["scene-N"] at the
+# host element's data-start. Hand-rolled regex inlining (previous approach)
+# bypassed all of that and produced blank scenes.
 
 
 def compose_html(
@@ -184,36 +92,28 @@ def compose_html(
         )
 
         if _is_hyperframes_scene(timing.render_path):
-            try:
-                inlined = _inline_hyperframes_scene(timing.render_path, scene_id)
-                body_parts.append(
-                    f"""      <div class="clip scene-visual scene-host" id="host-scene-{scene_id}"
+            # Sub-composition clip: the HyperFrames compiler inlines + scopes
+            # the scene file and auto-nests window.__timelines["scene-N"] at
+            # this host's data-start. data-composition-id MUST equal the
+            # scene file's root data-composition-id and its timeline key.
+            # Scene files are copied into compositions/ so the project keeps a
+            # single root composition (the CLI lints root-level HTML files with
+            # data-composition-id as duplicate entry points).
+            comps_dir = comp_dir / "compositions"
+            comps_dir.mkdir(parents=True, exist_ok=True)
+            scene_dest = comps_dir / f"scene_{scene_id}.html"
+            if Path(timing.render_path).resolve() != scene_dest.resolve():
+                shutil.copyfile(timing.render_path, scene_dest)
+            rel_sub = f"compositions/scene_{scene_id}.html"
+            body_parts.append(
+                f"""      <div class="clip scene-visual scene-host" id="host-scene-{scene_id}"
+        data-composition-id="scene-{scene_id}"
+        data-composition-src="{rel_sub}"
         data-start="{start}" data-duration="{slot_duration}"
         data-track-index="{track}"
-        style="position:absolute;left:0;top:0;width:1920px;height:1080px;z-index:{track};background:#ffffff;overflow:hidden;">
-{inlined}
-      </div>"""
-                )
-            except (OSError, UnicodeDecodeError) as exc:
-                logger.warning(
-                    "Failed to inline HyperFrames scene %s from %s: %s; "
-                    "falling back to iframe embedding.",
-                    scene_id,
-                    timing.render_path,
-                    exc,
-                )
-                body_parts.append(
-                    f"""      <iframe
-        class="clip scene-visual"
-        id="iframe-scene-{scene_id}"
-        data-start="{start}"
-        data-duration="{slot_duration}"
-        data-track-index="{track}"
-        src="{rel_render}"
-        style="position:absolute;left:0;top:0;width:1920px;height:1080px;border:0;z-index:{track};"
-        frameborder="0"
-        allowfullscreen></iframe>"""
-                )
+        data-width="1920" data-height="1080"
+        style="position:absolute;left:0;top:0;width:1920px;height:1080px;z-index:{track};background:#0a0f1c;overflow:hidden;"></div>"""
+            )
         else:
             # Use slot_duration (max of video/audio) so the video element holds
             # its last frame for the whole slot instead of vanishing to a white
@@ -233,27 +133,30 @@ def compose_html(
         track += 1
 
         if narration:
+            # Caption holds for the narration; without audio, for the slot.
+            caption_duration = audio_duration if timing.audio_path else slot_duration
             body_parts.append(
                 f"""      <div
         class="clip lower-third"
         id="lower-scene-{scene_id}"
         data-start="{start}"
-        data-duration="{audio_duration}"
+        data-duration="{caption_duration}"
         data-track-index="{track}"
         style="z-index:{track};">{narration}</div>"""
             )
             track += 1
 
-        body_parts.append(
-            f"""      <audio
+        if timing.audio_path:
+            body_parts.append(
+                f"""      <audio
         class="clip"
         id="audio-scene-{scene_id}"
         data-start="{start}"
         data-duration="{audio_duration}"
         data-track-index="{track}"
         src="{rel_audio}"></audio>"""
-        )
-        track += 1
+            )
+            track += 1
 
     title = html.escape(script_title or "Generated Video", quote=False)
     html_content = f"""<!DOCTYPE html>
@@ -300,11 +203,16 @@ def compose_html(
     style="position:relative;width:1920px;height:1080px;background:#ffffff;overflow:hidden;">
 {chr(10).join(body_parts)}
   </div>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+  <!-- Same GSAP URL the generated scenes use, so the compiler dedupes to one load. -->
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
   <script>
-    const tl = gsap.timeline({{ paused: true }});
-    window.__timelines = window.__timelines || {{}};
-    window.__timelines["main"] = tl;
+    (function () {{
+      window.__timelines = window.__timelines || {{}};
+      // Master timeline stays empty: scene sub-timelines are auto-nested by
+      // the HyperFrames runtime (keyed by data-composition-id), and clip
+      // visibility windows are compiled from data-start/data-duration.
+      window.__timelines["main"] = gsap.timeline({{ paused: true }});
+    }})();
   </script>
 </body>
 </html>

@@ -97,6 +97,10 @@ async def code_generator_node(state: LangGraphState):
                 logger.error(f"Scene {scene_id} code generation failed: {error}")
                 new_retry_counts[scene_id] = new_retry_counts.get(scene_id, 0) + 1
                 new_error_logs[scene_id] = error or "code generation failed"
+                # Drop the stale code from the previous round, otherwise the
+                # validator re-renders the exact code that already failed —
+                # a wasted render (up to minutes) plus a double retry bump.
+                new_code_paths.pop(scene_id, None)
 
         return {
             "code_paths": new_code_paths,
@@ -270,12 +274,20 @@ async def voiceover_and_images_node(state: LangGraphState):
             else:
                 failed_scenes.append(scene_id)
 
-        if failed_scenes:
+        if failed_scenes and not new_audio_paths:
+            # Every scene lost its narration — that's a dead TTS service, fail.
             return {
                 "audio_paths": new_audio_paths,
                 "status": "failed",
-                "overall_error": f"Voiceover failed for scenes: {failed_scenes}",
+                "overall_error": f"Voiceover failed for ALL scenes: {failed_scenes}",
             }
+        if failed_scenes:
+            # Graceful degradation: ship the affected scenes without narration
+            # (the compositor times them off the rendered visual instead).
+            logger.warning(
+                f"Voiceover failed for scenes {failed_scenes}; "
+                f"continuing with {len(new_audio_paths)}/{len(survivor_scenes)} narrated scenes"
+            )
 
         # Process image results
         merged_image_paths = {**state.get("image_paths", {})}

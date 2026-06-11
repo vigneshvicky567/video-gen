@@ -81,6 +81,12 @@ the topic clearly — do not pad, do not cut short.
 - visual_description must be specific:
   - For hyperframes: describe layout, text content, colors, GSAP animations
   - For manim: describe exact objects, formulas, and animation sequence
+- Manim scenes MUST describe a 2D visualization: flat graphs, diagrams, formulas.
+  NEVER ask for 3D surfaces, terrain, or rotating cameras — describe the same
+  idea as a 2D cross-section or contour plot instead (e.g. "a U-shaped loss
+  curve with a ball rolling to the minimum", not "a 3D hilly landscape").
+- One focused visualization per Manim scene (one diagram OR one plot OR one
+  formula walkthrough, ≤6 animation beats). Split denser ideas across scenes.
 
 Return ONLY valid JSON:
 {{

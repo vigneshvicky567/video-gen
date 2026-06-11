@@ -16,7 +16,7 @@ Exactly one `Scene` subclass per file with `construct(self)`.
 
 ```python
 from manim import *
-config.background_color = WHITE  # required by pipeline
+config.background_color = WHITE  # MODULE level — see rule below
 
 class Scene{N}(Scene):
     def construct(self):
@@ -27,7 +27,12 @@ class Scene{N}(Scene):
 
 ## Background / visibility
 
-- Canvas is WHITE (`config.background_color = WHITE`).
+- Canvas is WHITE. `config.background_color = WHITE` works ONLY at MODULE level
+  (directly under the import, OUTSIDE the class). Setting it inside
+  `construct()` is a silent no-op — the camera is created before `construct()`
+  runs, and the video renders on the default BLACK background, making all your
+  dark-colored content invisible. NEVER write `config.background_color` or
+  `self.camera.background_color` inside `construct()`.
 - ALL strokes, fills, text MUST be dark: `BLACK`, `BLUE_E`, `RED_E`, `GREEN_E`, `GREY_E`, `MAROON_E`, `PURPLE_E`.
 - NEVER use `WHITE` for any visible element — invisible.
 - Neutrals: prefer `BLACK`, `GREY_D`, `GREY_E`.
@@ -44,14 +49,20 @@ Use `Create`, NEVER `ShowCreation` (removed in CE).
 
 ## Allowed `rate_func` names (whitelist)
 
-Defined in `manim.utils.rate_functions`, exposed bare by `from manim import *` (timing.md L46-101). Use bare; do NOT prefix with `rate_functions.`.
+ALWAYS write the qualified form `rate_functions.<name>` — in Manim CE 0.20 the
+`ease_*` family is NOT exported by `from manim import *`; bare
+`rate_func=ease_out_sine` crashes with `NameError: name 'ease_out_sine' is not
+defined` (verified in this pipeline's render container). Only the classics
+(`linear`, `smooth`, `there_and_back`) happen to be exported bare — qualify
+everything anyway for one consistent rule.
 
-- Core: `linear`, `smooth`, `rush_into`, `rush_from`, `there_and_back`, `there_and_back_with_pause`, `double_smooth`, `lingering`.
-- Ease-in: `ease_in_sine`, `ease_in_quad`, `ease_in_cubic`, `ease_in_expo`, `ease_in_circ`, `ease_in_back`.
-- Ease-out: `ease_out_sine`, `ease_out_quad`, `ease_out_cubic`, `ease_out_expo`, `ease_out_circ`, `ease_out_back`, `ease_out_bounce`.
-- Ease-in-out: `ease_in_out_sine`, `ease_in_out_quad`, `ease_in_out_cubic`, `ease_in_out_expo`, `ease_in_out_circ`, `ease_in_out_back`.
+- Core: `rate_functions.linear`, `rate_functions.smooth`, `rate_functions.rush_into`, `rate_functions.rush_from`, `rate_functions.there_and_back`, `rate_functions.there_and_back_with_pause`, `rate_functions.double_smooth`, `rate_functions.lingering`.
+- Ease-in: `rate_functions.ease_in_sine`, `rate_functions.ease_in_quad`, `rate_functions.ease_in_cubic`, `rate_functions.ease_in_expo`, `rate_functions.ease_in_circ`, `rate_functions.ease_in_back`.
+- Ease-out: `rate_functions.ease_out_sine`, `rate_functions.ease_out_quad`, `rate_functions.ease_out_cubic`, `rate_functions.ease_out_expo`, `rate_functions.ease_out_circ`, `rate_functions.ease_out_back`, `rate_functions.ease_out_bounce`.
+- Ease-in-out: `rate_functions.ease_in_out_sine`, `rate_functions.ease_in_out_quad`, `rate_functions.ease_in_out_cubic`, `rate_functions.ease_in_out_expo`, `rate_functions.ease_in_out_circ`, `rate_functions.ease_in_out_back`.
 
-`ease_out_sine` IS valid (timing.md L86). Bare `ease_out` is NOT — does not exist. Bare names work only because of `from manim import *`.
+`rate_functions.ease_out` does NOT exist — pick a concrete shape like
+`rate_functions.ease_out_sine`.
 
 ## Allowed color constants (whitelist)
 
@@ -79,6 +90,36 @@ mixed = Tex(r"Area is $A = \pi r^2$", color=BLACK)       # latex.md L128
 - Default `font_size=48`. Titles 56-72; body 32-48; captions 24.
 - Color math parts: `eq.set_color_by_tex("x", RED_E)` or `eq[0][2].set_color(BLUE_E)`.
 - `AddTextLetterByLetter` works only on `Text`, not `MathTex`.
+
+### Equation overflow & overlap — HARD rules
+
+- After creating ANY `MathTex`/`Tex` longer than a few symbols, fit it BEFORE revealing:
+  ```python
+  eq = MathTex(r"z = w_1 x_1 + w_2 x_2 + w_3 x_3 + b", color=BLACK)
+  if eq.width > 10:
+      eq.scale_to_fit_width(10)
+  eq.move_to(ORIGIN)          # position AFTER fitting
+  self.play(Write(eq))
+  ```
+- One equation per screen region. NEVER `Write` a new equation onto a region that
+  still holds an old one — `ReplacementTransform(old, new)` or `FadeOut(old)` first.
+  Overlapping `MathTex` renders as garbled fragments.
+- Never split one logical equation across multiple `MathTex` objects positioned by
+  hand — one string, one object, let LaTeX do the layout.
+- Labels attached to moving objects must use `always_redraw` or move WITH the object
+  in the same `self.play`, or they detach and overlap other content.
+
+### Contrast contract — every visible mobject
+
+The canvas is WHITE (the pipeline injects `config.background_color = WHITE` if you
+forget it — never rely on a dark background existing).
+
+- Every `color=` you write must be readable on WHITE: `BLACK`, `GREY_E`, `BLUE_E`,
+  `RED_E`, `GREEN_E`, `MAROON_E`, `PURPLE_E`, or dark hex (`"#1a1a2e"`, `"#e63946"`).
+- FORBIDDEN on white: `WHITE`, `YELLOW`, `GREY_A`, `GREY_B`, `GOLD_A`, `TEAL_A`,
+  any `_A`/`_B` tint as text/stroke color.
+- Diagram nodes: dark stroke + light fill (`fill_color="#e8f4fd", fill_opacity=1,
+  color=BLUE_E`) so arrows and labels stay legible on top.
 
 ## Frame size — HARD limit
 
@@ -141,7 +182,7 @@ self.play(ReplacementTransform(step2, step3))   # morph, leaving no stale object
 
 ```python
 obj.shift(LEFT * 8)                                  # start offscreen-left
-self.play(obj.animate.shift(RIGHT * 8), rate_func=ease_out_sine)   # lands center
+self.play(obj.animate.shift(RIGHT * 8), rate_func=rate_functions.ease_out_sine)   # lands center
 ```
 
 Use `there_and_back` only for a deliberate round-trip (e.g. a nudge/bounce that should return).
@@ -160,9 +201,9 @@ self.play(ReplacementTransform(square, circle))         # transform-animations.m
 
 ```python
 # CORRECT
-self.play(square.animate.shift(RIGHT), rate_func=smooth, run_time=2)
+self.play(square.animate.shift(RIGHT), rate_func=rate_functions.smooth, run_time=2)
 # WRONG
-self.play(square.animate(rate_func=smooth).shift(RIGHT))
+self.play(square.animate(rate_func=rate_functions.smooth).shift(RIGHT))
 ```
 
 For rotation prefer `Rotate(mob, angle)` or `mob.rotate(angle)`. Do not pass `axis=` through `.animate.rotate(...)`.
@@ -171,7 +212,7 @@ For rotation prefer `Rotate(mob, angle)` or `mob.rotate(angle)`. Do not pass `ax
 
 ```python
 self.play(Create(circle), run_time=2)
-self.play(circle.animate.shift(RIGHT), run_time=0.5, rate_func=ease_out_sine)
+self.play(circle.animate.shift(RIGHT), run_time=0.5, rate_func=rate_functions.ease_out_sine)
 self.wait()       # 1 sec default
 self.wait(2)      # explicit seconds
 ```
@@ -195,7 +236,8 @@ Keep `run_time` 0.5 - 3 seconds (timing.md L199).
 | `Rotating(mob, radians=...)` | `radians=`/`axis=` are rejected by `Animation.__init__` in current CE — use `self.play(Rotate(mob, angle=PI/2))` for a fixed turn, or `mob.rotate(PI/2)` for an instant one. |
 | `ThreeDScene` / `ThreeDAxes` / `Surface` (3D) unless explicitly required | 3D renders are slow and fragile. Prefer a 2D `Axes` projection. If 3D is unavoidable: `class SceneN(ThreeDScene)`, `self.set_camera_orientation(phi=70*DEGREES, theta=-45*DEGREES)`, keep ≤1 `Surface` at `resolution=(16,16)`, no `Rotating`. |
 | `DARK_RED`, `DARK_BLUE`, `DARK_GREEN`, `LIGHT_GRAY`, `DARK_GRAY` | Not defined — use `_E` variants, `LIGHT_GREY` / `DARK_GREY`, or hex. |
-| `rate_functions.ease_out` | Does not exist — use `ease_out_sine`, `ease_out_quad`, `smooth`, or `linear`. |
+| `rate_functions.ease_out` | Does not exist — use `rate_functions.ease_out_sine`, `rate_functions.ease_out_quad`, `rate_functions.smooth`, or `rate_functions.linear`. |
+| `rate_func=ease_out_sine` (bare) | `NameError` in CE 0.20 — always qualify: `rate_func=rate_functions.ease_out_sine`. |
 | `rate_func=` inside `.animate(...)` | Pass to `self.play(...)` instead (animations.md L43-49). |
 | `from manimlib import *` | Wrong framework — use `from manim import *`. |
 | `Code(code=..., tab_width=..., background=..., language=..., font=..., style=..., font_size=..., insert_line_no=..., stroke_width=...)` | **Manim CE 0.20+ broke this API** — `Code()` no longer accepts `code=` kwarg. Use `Text("...", font_size=24)` or `Paragraph("line1", "line2")` for plain-text blocks. `Code()` is only for displaying source-code files. |

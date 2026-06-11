@@ -124,7 +124,7 @@ def test_compose_html_success(tmp_path):
     assert "<!DOCTYPE html>" in html_content
     assert 'data-composition-id="main"' in html_content
     assert 'data-duration="5"' in html_content
-    assert 'window.__timelines["main"] = tl' in html_content
+    assert 'window.__timelines["main"] =' in html_content
 
 
 def test_compose_html_uses_scene_plan_narration(tmp_path):

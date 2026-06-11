@@ -73,6 +73,28 @@ _MIN_INTERVAL: float = 60.0 / _RPM
 _rate_lock = threading.Lock()
 _last_request_time: float = 0.0
 
+# ── API key pool ──────────────────────────────────────────────────────────────
+# NVIDIA_API_KEYS=key1,key2,key3 spreads requests round-robin across accounts,
+# multiplying the per-key RPM budget. On a 429 the request retries on the NEXT
+# key immediately-ish instead of sleeping out the full backoff on one key.
+# Falls back to the single NVIDIA_API_KEY when the pool var is absent.
+_key_lock = threading.Lock()
+_key_index = 0
+
+
+def _api_keys() -> list[str]:
+    pool = [k.strip() for k in os.getenv("NVIDIA_API_KEYS", "").split(",") if k.strip()]
+    return pool or [settings.NVIDIA_API_KEY]
+
+
+def _next_key() -> str:
+    global _key_index
+    keys = _api_keys()
+    with _key_lock:
+        key = keys[_key_index % len(keys)]
+        _key_index += 1
+    return key
+
 
 def _get_semaphore() -> asyncio.Semaphore:
     """Return (or create) the per-event-loop semaphore."""
@@ -109,10 +131,6 @@ class _NimCompletions:
     def _do_request(self, payload: dict) -> SimpleNamespace:
         """Execute one HTTP request to NIM (sync, blocking). Called from thread pool."""
         url = f"{settings.NVIDIA_BASE_URL.rstrip('/')}/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {settings.NVIDIA_API_KEY}",
-            "Content-Type": "application/json",
-        }
         model = payload.get("model", "?")
         msgs = payload.get("messages", [])
         prompt_chars = sum(len(m.get("content") or "") for m in msgs)
@@ -128,8 +146,15 @@ class _NimCompletions:
         t0 = time.perf_counter()
         last_exc = None
 
-        for attempt in range(1, 4):  # up to 3 attempts
+        n_keys = len(_api_keys())
+        max_attempts = 3 + 2 * n_keys  # more keys -> more 429 headroom
+
+        for attempt in range(1, max_attempts + 1):
             try:
+                headers = {
+                    "Authorization": f"Bearer {_next_key()}",
+                    "Content-Type": "application/json",
+                }
                 with httpx.Client(timeout=timeout) as client:
                     response = client.post(url, headers=headers, json=payload)
                     response.raise_for_status()
@@ -139,12 +164,19 @@ class _NimCompletions:
             except httpx.HTTPStatusError as exc:
                 status_code = exc.response.status_code
 
-                if status_code == 429:
+                if status_code == 429 and attempt < max_attempts:
                     retry_after = exc.response.headers.get("retry-after")
-                    wait = float(retry_after) if retry_after else attempt * 15
+                    if retry_after:
+                        wait = float(retry_after)
+                    elif n_keys > 1:
+                        # Next attempt uses a different key — short pause only.
+                        wait = 2.0
+                    else:
+                        wait = min(attempt * 15, 120)
                     _logger.warning("NIM rate limited (429), backing off",
                                     extra={"model": model, "attempt": attempt,
-                                           "wait_s": wait, "retry_after": retry_after})
+                                           "wait_s": wait, "retry_after": retry_after,
+                                           "key_pool": n_keys})
                     time.sleep(wait)
                     last_exc = exc
                     continue

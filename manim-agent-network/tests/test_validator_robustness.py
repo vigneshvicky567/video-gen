@@ -17,9 +17,18 @@ sys.path.insert(0, _REPO_ROOT)
 
 
 def _import_validator_helpers():
-    """Import validator main module without triggering FastAPI startup."""
-    from app.main import _compute_timeout, _preflight_ast_checks, _SELF_TEST_BAD_SOURCE
-    return _compute_timeout, _preflight_ast_checks, _SELF_TEST_BAD_SOURCE
+    """Import validator main module without triggering FastAPI startup.
+
+    Loaded by file path: both validator and code-generator expose an `app`
+    package, and whichever sys.path entry wins shadows the other.
+    """
+    import importlib.util
+
+    path = os.path.join(_REPO_ROOT, "services", "validator", "app", "main.py")
+    spec = importlib.util.spec_from_file_location("_validator_main", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module._compute_timeout, module._preflight_ast_checks, module._SELF_TEST_BAD_SOURCE
 
 
 def test_compute_timeout_floor():

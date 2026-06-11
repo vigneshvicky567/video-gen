@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     SCRIPT_WRITER_MODEL: str = os.getenv("SCRIPT_WRITER_MODEL", "moonshotai/kimi-k2-instruct")
     CODE_GENERATOR_MODEL: str = os.getenv("CODE_GENERATOR_MODEL", "qwen/qwen3-coder-480b-a35b-instruct")
     COMPOSITOR_LLM_MODEL: str = os.getenv("COMPOSITOR_LLM_MODEL", "moonshotai/kimi-k2-instruct")
+    # Optional sampling overrides for the code generator. Reasoning models
+    # (e.g. nvidia/nemotron-3-*) want temperature 1.0 / top_p 0.95 and a large
+    # max_tokens budget because hidden reasoning tokens count against the
+    # completion limit. Empty temperature -> per-path defaults (0.2 manim, 0.6 HF).
+    CODE_GENERATOR_TEMPERATURE: str = os.getenv("CODE_GENERATOR_TEMPERATURE", "")
+    CODE_GENERATOR_TOP_P: str = os.getenv("CODE_GENERATOR_TOP_P", "")
+    CODE_GENERATOR_MAX_TOKENS: int = int(os.getenv("CODE_GENERATOR_MAX_TOKENS", "16384"))
 
     # ── TTS ───────────────────────────────────────────────────────────────────
     VOICEOVER_PROVIDER: str = os.getenv("VOICEOVER_PROVIDER", "kokoro")  # kokoro | espeak
@@ -46,7 +53,10 @@ class Settings(BaseSettings):
     CODE_GENERATOR_URL: str = os.getenv("CODE_GENERATOR_URL", "http://code-generator:8002")
     VALIDATOR_URL: str = os.getenv("VALIDATOR_URL", "http://validator:8003")
     VOICEOVER_URL: str = os.getenv("VOICEOVER_URL", "http://voiceover:8004")
-    ASSEMBLER_URL: str = os.getenv("ASSEMBLER_URL", "http://assembler:8005")
+    # The live assembler is the COMPOSITOR (HyperFrames HTML pipeline);
+    # docker-compose.yml sets ASSEMBLER_URL=http://compositor:8005. The ffmpeg
+    # `assembler` service is a legacy Manim-only path kept for reference.
+    ASSEMBLER_URL: str = os.getenv("ASSEMBLER_URL", "http://compositor:8005")
     IMAGE_FETCHER_URL: str = os.getenv("IMAGE_FETCHER_URL", "http://image-fetcher:8006")
 
     # ── External API Keys ─────────────────────────────────────────────────────

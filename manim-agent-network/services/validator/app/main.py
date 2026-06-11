@@ -6,6 +6,7 @@ from shared.log import get_logger, set_log_context, timed_block, log_subprocess,
 import asyncio
 import subprocess
 import os
+import re
 import sys
 import glob
 import uuid
@@ -43,10 +44,45 @@ _TIMEOUT_CEILING_S = 600
 # Self-test source. MUST be flagged by AST preflight; otherwise image is stale.
 _SELF_TEST_BAD_SOURCE = (
     "from manim import *\n"
-    "class S(Scene):\n"
+    "config.background = WHITE\n"
+    "class S(ThreeDScene):\n"
     "    def construct(self):\n"
-    "        self.play(ShowCreation(Circle()))\n"
+    "        self.play(ShowCreation(Circle()), self.camera.animate.set_phi(0))\n"
 )
+
+
+def _reencode_for_seek(path: str, scene_id: int) -> str:
+    """Re-encode a manim render with dense keyframes for the HyperFrames player.
+
+    Manim's default h264 output has keyframe intervals of 4s+; the HyperFrames
+    capture engine seeks the <video> element frame-by-frame and sparse
+    keyframes cause seek failures — observed as black/frozen scene slots in
+    the final video (the compositor lint warns about exactly this). 30fps with
+    g=30 puts a keyframe every second. Permissive: returns the original path
+    if ffmpeg fails, so a re-encode hiccup never fails an otherwise good scene.
+    """
+    out_path = os.path.splitext(path)[0] + "_seek.mp4"
+    cmd = [
+        "ffmpeg", "-y", "-v", "error", "-i", path,
+        "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+        "-r", "30", "-g", "30", "-keyint_min", "30",
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+        "-an",
+        out_path,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+            logger.info("Re-encoded render for seekability",
+                        extra={"scene_id": scene_id, "path": out_path})
+            return out_path
+        logger.warning("Seek re-encode failed, using original render",
+                       extra={"scene_id": scene_id, "rc": result.returncode,
+                              "stderr": (result.stderr or "")[:300]})
+    except Exception as exc:
+        logger.warning("Seek re-encode error, using original render",
+                       extra={"scene_id": scene_id, "error": str(exc)[:200]})
+    return path
 
 
 def _compute_timeout(source: str) -> int:
@@ -93,10 +129,15 @@ def detect_content_type(code_path: str) -> str:
         return "manim"
 
 
-def validate_hyperframes(code_path: str) -> tuple:
+def validate_hyperframes(code_path: str, scene_id: int = None) -> tuple:
     """Validate HyperFrames HTML structure.
-    
-    Checks for valid HTML with at least one clip element (data-start + data-duration).
+
+    Checks for valid HTML with at least one clip element (data-start + data-duration),
+    and — when scene_id is given — that the composition id and timeline registry key
+    both equal "scene-{scene_id}". The compositor mounts the scene with
+    data-composition-id="scene-{scene_id}"; the HyperFrames runtime auto-nests the
+    scene timeline ONLY when the registered key matches that id, so a mismatch
+    renders as a blank scene.
     Returns (success, render_path, error_message).
     """
     try:
@@ -129,6 +170,27 @@ def validate_hyperframes(code_path: str) -> tuple:
         if "window.__timelines[" not in html_content:
             return False, "", "HyperFrames HTML is missing window.__timelines['id'] registration"
 
+        if scene_id is not None:
+            expected = f"scene-{scene_id}"
+            comp_ids = re.findall(r'data-composition-id\s*=\s*["\']([^"\']+)["\']', html_content)
+            if expected not in comp_ids:
+                return False, "", (
+                    f"Root data-composition-id must be \"{expected}\" "
+                    f"(found: {comp_ids or 'none'}). The compositor mounts this scene "
+                    f"by that exact id."
+                )
+            timeline_keys = re.findall(
+                r'window\.__timelines\[\s*["\']([^"\']+)["\']\s*\]\s*=', html_content
+            )
+            if expected not in timeline_keys:
+                return False, "", (
+                    f"Timeline must be registered as window.__timelines[\"{expected}\"] "
+                    f"(found keys: {timeline_keys or 'none'}). The runtime auto-nests the "
+                    f"timeline only when the key equals data-composition-id."
+                )
+            if "repeat: -1" in html_content or "repeat:-1" in html_content:
+                return False, "", "repeat: -1 (infinite) breaks the capture engine — compute finite repeats from data-duration"
+
         logger.info(f"HyperFrames validation passed for {code_path}")
         # Return the HTML path as render_path — actual rendering happens in compositor
         return True, code_path, ""
@@ -147,6 +209,15 @@ _FORBIDDEN_MODULES = {
 _FORBIDDEN_BUILTINS = {
     "eval", "exec", "compile", "__import__", "open", "breakpoint",
     "memoryview", "globals", "locals",
+}
+# Color constants the LLM keeps inventing that do not exist in Manim CE.
+# Value = suggested replacement (fed back to the code-generator on retry).
+_INVALID_COLOR_NAMES = {
+    "DARK_RED": "RED_E or MAROON_E",
+    "DARK_BLUE": "BLUE_E",
+    "DARK_GREEN": "GREEN_E",
+    "LIGHT_GRAY": "GREY_A or LIGHT_GREY",
+    "DARK_GRAY": "GREY_E or DARK_GREY",
 }
 
 
@@ -185,6 +256,11 @@ def _preflight_ast_checks(source: str, scene_id: int) -> tuple:
             deprecated = {"SVGMobject", "SVGCircle", "ShowCreation", "ShowCreationThenFadeOut", "VGraph", "there_and_back_once"}
             if node.id in deprecated:
                 issues.append(f"Forbidden identifier used: {node.id}")
+            if node.id in _INVALID_COLOR_NAMES:
+                issues.append(
+                    f"Invalid color constant '{node.id}' (not in Manim CE): "
+                    f"use {_INVALID_COLOR_NAMES[node.id]}"
+                )
             if node.id in _FORBIDDEN_BUILTINS:
                 issues.append(f"Security: forbidden builtin '{node.id}'")
             self.generic_visit(node)
@@ -192,6 +268,22 @@ def _preflight_ast_checks(source: str, scene_id: int) -> tuple:
         def visit_Call(self, node: ast.Call):
             if isinstance(node.func, ast.Name) and node.func.id in _FORBIDDEN_BUILTINS:
                 issues.append(f"Security: forbidden builtin call '{node.func.id}()'")
+            if isinstance(node.func, ast.Name):
+                kwargs = {kw.arg for kw in node.keywords if kw.arg}
+                if node.func.id == "Rotating" and ("radians" in kwargs or "axis" in kwargs):
+                    issues.append(
+                        "Rotating(radians=/axis=) was removed in current Manim CE: "
+                        "use self.play(Rotate(mob, angle=...)) or mob.rotate(angle)"
+                    )
+                if node.func.id in {"Circle", "Arc"} and "arc_length" in kwargs:
+                    issues.append(
+                        f"{node.func.id}(arc_length=...) is not a valid kwarg: use radius= / angle="
+                    )
+                if node.func.id == "Code" and "code" in kwargs:
+                    issues.append(
+                        "Code(code=...) was removed in Manim CE 0.20+: use Text(...) or "
+                        "Paragraph(...) for text blocks"
+                    )
             self.generic_visit(node)
 
         def visit_Attribute(self, node: ast.Attribute):
@@ -199,8 +291,17 @@ def _preflight_ast_checks(source: str, scene_id: int) -> tuple:
                 key = f"{node.value.id}.{node.attr}"
                 if key == "rate_functions.ease_out":
                     issues.append("Use 'rate_functions.ease_out_sine' instead of 'rate_functions.ease_out'")
+                if key == "config.background":
+                    issues.append("'config.background' does not exist: use 'config.background_color'")
                 if node.value.id in _FORBIDDEN_MODULES:
                     issues.append(f"Security: forbidden module attribute access '{key}'")
+            # <anything>.camera.animate is invalid: ThreeDCamera (and camera in
+            # general) is not animatable via .animate in CE.
+            if node.attr == "animate" and isinstance(node.value, ast.Attribute) and node.value.attr == "camera":
+                issues.append(
+                    "camera has no '.animate': use self.move_camera(phi=..., theta=...) "
+                    "or self.begin_ambient_camera_rotation(...) in a ThreeDScene"
+                )
             self.generic_visit(node)
 
     Checker().visit(tree)
@@ -309,13 +410,47 @@ async def validate_code(request: ValidatorRequest):
         return await _validate_manim(request, run_id, start_time)
 
 
+async def _lint_hyperframes_remote(code_path: str) -> tuple:
+    """Ask the compositor (which ships the hyperframes CLI) to lint the scene.
+
+    Returns (ok, error_message). Permissive when the lint service is
+    unreachable — the structural checks above still apply.
+    """
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=180) as client:
+            resp = await client.post(
+                f"{settings.ASSEMBLER_URL}/lint", json={"html_path": code_path}
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        if data.get("warnings"):
+            for w in data["warnings"]:
+                logger.warning(f"hyperframes lint warning: {w}")
+        if not data.get("ok", True):
+            return False, "HyperFrames lint errors:\n" + "\n".join(data.get("errors", []))
+        return True, ""
+    except Exception as exc:
+        logger.warning(f"hyperframes lint unavailable ({exc}); proceeding without it")
+        return True, ""
+
+
 async def _validate_hyperframes(request, run_id, start_time):
     """Validate HyperFrames HTML content."""
     logger.info(f"Validating HyperFrames HTML for scene {request.scene_id}")
-    
+
     try:
-        success, render_path, error = validate_hyperframes(request.code_path)
-        
+        success, render_path, error = validate_hyperframes(request.code_path, request.scene_id)
+
+        # Structural checks passed — run the real HyperFrames linter for the
+        # blank-scene classes regex can't see (opacity no-ops, orphan tweens,
+        # nondeterminism). Lint errors fail validation so the code-generator
+        # retries with the lint findings (and their FIX hints) as feedback.
+        if success:
+            lint_ok, lint_error = await _lint_hyperframes_remote(request.code_path)
+            if not lint_ok:
+                success, render_path, error = False, "", lint_error
+
         total_duration = time.time() - start_time
         
         if _tracer:
@@ -435,22 +570,24 @@ async def _validate_manim(request, run_id, start_time):
                     )
                 log_file(logger, "rendered", mp4_files[0], scene_id=request.scene_id)
                 logger.info("Render output found", extra={"scene_id": request.scene_id, "path": mp4_files[0]})
+                final_path = await asyncio.to_thread(
+                    _reencode_for_seek, mp4_files[0], request.scene_id)
                 # Final trace update
                 if _tracer:
                     try:
                         _tracer.update_run(
                             run_id=run_id,
-                            outputs={"render_path": mp4_files[0], "success": True},
+                            outputs={"render_path": final_path, "success": True},
                             end_time=time.time(),
                             metrics={"total_latency": total_duration}
                         )
                     except Exception:
                         pass
-                
+
                 return ValidatorResponse(
                     scene_id=request.scene_id,
                     success=True,
-                    render_path=mp4_files[0]
+                    render_path=final_path
                 )
             else:
                 total_duration = time.time() - start_time

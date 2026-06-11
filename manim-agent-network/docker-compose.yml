@@ -45,6 +45,7 @@ services:
       - ./workspace:/workspace
     environment:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - NVIDIA_API_KEYS=${NVIDIA_API_KEYS:-}
       # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
       - SCRIPT_WRITER_MODEL=${SCRIPT_WRITER_MODEL:-moonshotai/kimi-k2-instruct}
@@ -62,9 +63,13 @@ services:
       - ./workspace:/workspace
     environment:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - NVIDIA_API_KEYS=${NVIDIA_API_KEYS:-}
       # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
       - CODE_GENERATOR_MODEL=${CODE_GENERATOR_MODEL:-qwen/qwen3-coder-480b-a35b-instruct}
+      - CODE_GENERATOR_TEMPERATURE=${CODE_GENERATOR_TEMPERATURE:-}
+      - CODE_GENERATOR_TOP_P=${CODE_GENERATOR_TOP_P:-}
+      - CODE_GENERATOR_MAX_TOKENS=${CODE_GENERATOR_MAX_TOKENS:-16384}
       - NVIDIA_RPM=${NVIDIA_RPM:-35}
       - NIM_MAX_CONCURRENT=3
     depends_on:
@@ -114,6 +119,7 @@ services:
       - ./workspace:/workspace
     environment:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - NVIDIA_API_KEYS=${NVIDIA_API_KEYS:-}
       # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - PEXELS_API_KEY=${PEXELS_API_KEY}
       - NVIDIA_RPM=${NVIDIA_RPM:-35}
@@ -131,6 +137,7 @@ services:
       - ./workspace:/workspace
     environment:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - NVIDIA_API_KEYS=${NVIDIA_API_KEYS:-}
       # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - COMPOSITOR_LLM_MODEL=${COMPOSITOR_LLM_MODEL:-moonshotai/kimi-k2-instruct}
     depends_on:

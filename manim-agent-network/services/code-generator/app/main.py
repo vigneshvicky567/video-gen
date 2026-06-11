@@ -14,6 +14,22 @@ import uuid
 import time
 
 
+def _sampling_temperature(path_default: float) -> float:
+    """CODE_GENERATOR_TEMPERATURE env override, else the per-path default.
+
+    Reasoning models (nvidia/nemotron-3-*) need temperature 1.0; coder models
+    work best at low temperature. Env-driven so a model swap in .env can carry
+    its sampling params without a code change.
+    """
+    raw = settings.CODE_GENERATOR_TEMPERATURE.strip()
+    return float(raw) if raw else path_default
+
+
+def _sampling_top_p() -> float | None:
+    raw = settings.CODE_GENERATOR_TOP_P.strip()
+    return float(raw) if raw else None
+
+
 def _run_sanitizer_self_test() -> None:
     """Fail-fast on stale image: confirm sanitizer rewrites ShowCreation."""
     sample = (
@@ -105,12 +121,62 @@ Visual baseline (override with explicit user-supplied palette when given):
   duration:0.6}})`, vary eases (≥3/scene), use autoAlpha not opacity. Entrance
   animations only — NO exit animations except the final scene.
 - CONTRAST: on-screen text must hit WCAG 4.5:1 against whatever is behind it.
-- GSAP CDN: https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"""
+- GSAP CDN (exact URL — the compositor dedupes it against the master doc):
+  https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"""
 
-def _build_hf_prompt(scene_id: int, narration: str, visual: str, duration: int) -> str:
+def _build_hf_prompt(scene_id: int, narration: str, visual: str, duration: int,
+                     error_log: str = None, previous_html: str = None) -> str:
     """User-prompt body. Style + structure rules come from the system prompt
     (hf_rules.md). This message only carries scene-specific values + the two
     template strings the LLM must emit verbatim with the right scene_id."""
+    contract = f"""REQUIRED root wrapper (copy literally — the HyperFrames compiler mounts the
+scene by this exact data-composition-id, then drops the wrapper):
+  <div id="composition"
+       data-composition-id="scene-{scene_id}"
+       data-start="0"
+       data-duration="{duration}"
+       data-width="1920"
+       data-height="1080"
+       style="position:relative;width:1920px;height:1080px;overflow:hidden;">
+
+REQUIRED GSAP registration block (paste literally with the right scene_id —
+the runtime auto-nests the timeline ONLY when this key equals the
+data-composition-id above):
+  const tl = gsap.timeline({{ paused: true }});
+  window.__timelines = window.__timelines || {{}};
+  window.__timelines["scene-{scene_id}"] = tl;
+  // then add tl.from(...) / tl.to(...) calls for each animated element
+
+Both `body` and the `#composition` div MUST have an explicit non-transparent
+background-color following the system palette baseline (tinted near-neutral,
+NOT pure #ffffff/#000000) so the rendered frame is visible.
+
+Do NOT include a lower-third caption — narration is audio-only.
+Do NOT use @font-face — use system font stacks per the system typography rules.
+Do NOT load external scripts other than the GSAP CDN.
+
+Output ONLY the complete <!DOCTYPE html>...</html> document."""
+
+    if error_log and previous_html:
+        return f"""Fix this HyperFrames scene per the system rules — it failed validation.
+
+Scene ID: {scene_id}
+Total duration: {duration} seconds
+Narration (spoken, NOT on-screen): {narration}
+Visual description: {visual}
+
+PREVIOUS HTML:
+```html
+{previous_html[:6000]}
+```
+
+VALIDATION ERROR:
+{error_log[-600:]}
+
+Fix the error while keeping the scene's content and design intent.
+
+{contract}"""
+
     return f"""Create a HyperFrames HTML scene per the system rules.
 
 Scene ID: {scene_id}
@@ -118,29 +184,7 @@ Total duration: {duration} seconds
 Narration (spoken, NOT on-screen): {narration}
 Visual description: {visual}
 
-REQUIRED root wrapper (copy id literally — the compositor namespaces it later):
-  <div id="composition"
-       data-composition-id="scene-{scene_id}"
-       data-start="0"
-       data-duration="{duration}"
-       data-width="1920"
-       data-height="1080"
-       style="position:relative;width:1920px;height:1080px;background:#ffffff;overflow:hidden;">
-
-REQUIRED GSAP registration block (paste literally with the right scene_id):
-  const tl = gsap.timeline({{ paused: true }});
-  window.__timelines = window.__timelines || {{}};
-  window.__timelines["scene-{scene_id}"] = tl;
-  // then add tl.from(...) / tl.to(...) calls for each animated element
-
-Both `body` and the `#composition` div MUST have an explicit non-transparent
-background (default white #ffffff) so the rendered frame is visible.
-
-Do NOT include a lower-third caption — narration is audio-only.
-Do NOT use @font-face — use the system-ui / Inter / Arial stack.
-Do NOT load external scripts other than the GSAP CDN.
-
-Output ONLY the complete <!DOCTYPE html>...</html> document."""
+{contract}"""
 
 
 def _extract_html(text: str) -> str:
@@ -159,13 +203,16 @@ async def _generate_hyperframes(request, run_id: str, start_time: float):
     scene    = request.scene
     scene_id = scene.scene_id
     set_log_context(scene_id=scene_id)
-    logger.info("Generating HyperFrames HTML", extra={"scene_id": scene_id})
+    is_retry = bool(request.error_log and request.previous_code)
+    logger.info("Generating HyperFrames HTML", extra={"scene_id": scene_id, "is_retry": is_retry})
 
     prompt = _build_hf_prompt(
-        scene_id  = scene_id,
-        narration = scene.narration_text,
-        visual    = scene.visual_description,
-        duration  = scene.estimated_duration_seconds,
+        scene_id      = scene_id,
+        narration     = scene.narration_text,
+        visual        = scene.visual_description,
+        duration      = scene.estimated_duration_seconds,
+        error_log     = request.error_log,
+        previous_html = request.previous_code,
     )
 
     last_error = None
@@ -178,7 +225,9 @@ async def _generate_hyperframes(request, run_id: str, start_time: float):
                     {"role": "system", "content": _HF_SYSTEM},
                     {"role": "user",   "content": prompt},
                 ],
-                temperature = 0.6,
+                temperature = _sampling_temperature(0.6),
+                top_p       = _sampling_top_p(),
+                max_tokens  = settings.CODE_GENERATOR_MAX_TOKENS,
             )
             elapsed = time.time() - t0
             html = _extract_html(resp.choices[0].message.content)
@@ -321,7 +370,9 @@ async def _generate_manim(request, run_id: str, start_time: float):
                 {"role": "system", "content": _MANIM_SYSTEM},
                 {"role": "user",   "content": prompt},
             ],
-            temperature     = 0.2,
+            temperature     = _sampling_temperature(0.2),
+            top_p           = _sampling_top_p(),
+            max_tokens      = settings.CODE_GENERATOR_MAX_TOKENS,
             response_format = {"type": "json_object"},
         )
         llm_dur = time.time() - llm_start

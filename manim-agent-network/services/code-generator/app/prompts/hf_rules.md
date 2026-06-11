@@ -56,6 +56,7 @@ window.__timelines["scene-{scene_id}"] = tl;
 
 - **Explicit `background-color` on `#composition` and on each `.scene` div.** Required for shader compositions; safe everywhere (transitions.md L106).
 - **Never `opacity: 0` on a clip element directly.** Framework forces `opacity: 1` on any element with `data-start`/`data-duration` while active — your CSS is silently overwritten. Wrap in a no-data-attr div and animate the wrapper (patterns.md L96–98).
+- **Never combine CSS `opacity: 0` with `gsap.from(..., { opacity: 0 })` on the same element.** `from()` animates FROM the given value TO the current CSS value — if CSS is already 0 the element animates 0→0 and stays invisible forever. Pick ONE: either CSS starts hidden and you use `gsap.to(..., { opacity: 1 })` / `tl.set` reveals, or CSS holds the final visible state and `gsap.from()` provides the hidden start. Default to the `from()` style.
 - **Fonts**: write `font-family` in CSS — compiler embeds supported fonts automatically. No `@font-face` for built-ins. For custom fonts: user provides `.woff2` in `fonts/` and you add local `@font-face`; warn if missing. No async font-loading APIs (SKILL.md L362–366).
 - **Don't `gsap.set()` clip elements from later scenes** — they're not in the DOM at page load. Use `tl.set(selector, vars, timePos)` inside the timeline at/after the clip's `data-start` (SKILL.md L318).
 - **No `<br>` in body content** — natural wrap + forced break = double break. Use `max-width`. Exception: deliberate one-word-per-line display titles (SKILL.md L319).
