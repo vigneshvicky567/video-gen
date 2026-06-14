@@ -4,6 +4,8 @@ from shared.schemas.common import ScriptResponse
 
 class ScriptWriterResponse(BaseModel):
     script: ScriptResponse
+    # {"mode": "single"|"council", "duration_audit": {...}, "warnings": [...]}
+    meta: Optional[dict] = None
 
 class CodeGeneratorResponse(BaseModel):
     scene_id: int

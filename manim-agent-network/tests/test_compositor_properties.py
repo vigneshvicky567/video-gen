@@ -10,7 +10,7 @@ Properties covered:
   4. Magic byte validation accepts only JPEG and PNG
   5. Image fetcher response covers all requested scenes
   6. Pexels Authorization header carries the configured API key
-  7. Lower-third narration text is truncated to 120 characters
+  7. Caption chunking is lossless and windows never overlap or exceed the slot
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ if PROJECT_ROOT not in sys.path:
 from shared.schemas.common import SceneTimingRecord, ScenePlan
 from services.compositor.app.duration_prober import compute_scene_timings
 from services.compositor.app.html_validator import CompositionValidator
-from services.compositor.app.llm_composer import truncate_lower_third
+from services.compositor.app.llm_composer import chunk_narration, allocate_caption_windows
 
 # image-fetcher uses a hyphenated directory name which Python can't import
 # directly. Add its parent to sys.path so `app` resolves correctly.
@@ -317,21 +317,31 @@ def test_pexels_authorization_header(api_key: str):
 
 @given(st.text(min_size=0, max_size=500))
 @settings(max_examples=100)
-def test_lower_third_truncation(text: str):
+def test_chunk_narration_lossless_and_bounded(text: str):
     """
-    Property 7: truncate_lower_third always returns a string of at most
-    120 characters, and returns the original text unchanged when it is
-    already <= 120 characters.
-
-    Validates: Requirements 4.6
+    Property 7 (chunked captions): chunk_narration never loses words and each
+    chunk is within the size budget (or is a single unsplittable word).
     """
-    result = truncate_lower_third(text)
+    chunks = chunk_narration(text)
+    assert " ".join(chunks) == " ".join(text.split()), "narration text was lost in chunking"
+    for c in chunks:
+        assert len(c) <= 90 or " " not in c, f"chunk exceeds 90 chars and is splittable: {c!r}"
 
-    assert len(result) <= 120, (
-        f"truncate_lower_third returned {len(result)} chars, expected <= 120"
-    )
 
-    if len(text) <= 120:
-        assert result == text, (
-            f"Short text was modified: input={text!r}, output={result!r}"
-        )
+@given(
+    st.lists(st.text(min_size=1, max_size=40), min_size=1, max_size=8),
+    st.floats(min_value=0.5, max_value=60.0),
+    st.floats(min_value=0.5, max_value=60.0),
+    st.floats(min_value=0.0, max_value=120.0),
+)
+@settings(max_examples=100)
+def test_caption_windows_chain_and_clamp(chunks, audio, slot, start):
+    """Caption windows chain exactly (no overlap) and never exceed the slot."""
+    wins = allocate_caption_windows(chunks, audio, slot, start)
+    for a, b in zip(wins, wins[1:]):
+        assert abs((a[0] + a[1]) - b[0]) < 1e-6, "windows do not chain (overlap/gap)"
+    if wins:
+        assert all(d > 0 for _, d, _ in wins), "non-positive caption duration"
+        # the real neighbor boundary is the 3-decimal rounded accumulated start,
+        # so compare against that (not the unrounded float)
+        assert (wins[-1][0] + wins[-1][1]) <= round(start + slot, 3) + 1e-9, "caption past scene slot"

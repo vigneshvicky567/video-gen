@@ -15,8 +15,87 @@ from shared.schemas.common import SceneTimingRecord
 logger = get_logger(__name__)
 
 
-def truncate_lower_third(text: str) -> str:
-    return text[:120]
+# Captions live on their own reserved track so sequential windows can never
+# collide with scene visuals/audio (which start at track 1). z-index is a
+# constant so captions always render above scene visuals (track index != z-order).
+CAPTION_TRACK_INDEX = 0
+CAPTION_MAX_CHARS = 90
+CAPTION_Z_INDEX = 1000
+
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?;:])\s+")
+
+
+def chunk_narration(text: str, max_chars: int = CAPTION_MAX_CHARS) -> List[str]:
+    """Split narration into caption-sized chunks on word boundaries.
+
+    Lossless: " ".join(chunks) == " ".join(text.split()). Sentences are packed
+    greedily up to max_chars; an over-long sentence falls back to greedy word
+    packing (a single word longer than max_chars becomes its own chunk).
+    """
+    normalized = " ".join((text or "").split())
+    if not normalized:
+        return []
+
+    chunks: List[str] = []
+    for sentence in _SENTENCE_SPLIT.split(normalized):
+        if not sentence:
+            continue
+        if chunks and len(chunks[-1]) + 1 + len(sentence) <= max_chars:
+            chunks[-1] = f"{chunks[-1]} {sentence}"
+        elif len(sentence) <= max_chars:
+            chunks.append(sentence)
+        else:
+            # Sentence too long: pack its words.
+            cur = ""
+            for word in sentence.split(" "):
+                if cur and len(cur) + 1 + len(word) <= max_chars:
+                    cur = f"{cur} {word}"
+                else:
+                    if cur:
+                        chunks.append(cur)
+                    cur = word
+            if cur:
+                chunks.append(cur)
+    return chunks
+
+
+def allocate_caption_windows(
+    chunks: List[str],
+    audio_duration: float,
+    slot: float,
+    scene_start: float,
+) -> List[tuple]:
+    """Assign each chunk a (start, duration, text) window within the scene.
+
+    Windows chain exactly in 3-decimal space (start[i+1] == start[i]+dur[i]) so
+    there is zero same-track overlap. Duration is proportional to word count.
+    The final chunk absorbs rounding drift and is clamped to end at
+    scene_start + min(window, slot), so captions never bleed into the next scene.
+    """
+    window = audio_duration if audio_duration > 0 else slot
+    # Captions must fit inside the scene slot. Normally slot = max(video, audio)
+    # >= audio so this is a no-op, but clamp defensively so a stray window > slot
+    # can never push a caption past the slot boundary.
+    window = min(window, slot)
+    if not chunks or window <= 0:
+        return []
+
+    weights = [max(1, len(c.split())) for c in chunks]
+    total_w = sum(weights)
+    end_limit = round(scene_start + window, 3)
+
+    out: List[tuple] = []
+    cur = round(scene_start, 3)
+    for i, (chunk, w) in enumerate(zip(chunks, weights)):
+        if i == len(chunks) - 1:
+            dur = round(end_limit - cur, 3)
+        else:
+            dur = round(window * w / total_w, 3)
+        if dur <= 0:
+            continue
+        out.append((cur, dur, chunk))
+        cur = round(cur + dur, 3)
+    return out
 
 
 def _scene_value(scene: Any, key: str, default: Any = None) -> Any:
@@ -86,10 +165,7 @@ def compose_html(
         )
         rel_render = html.escape(_relative_to_composition(timing.render_path, comp_dir), quote=True)
         rel_audio = html.escape(_relative_to_composition(timing.audio_path, comp_dir), quote=True)
-        narration = html.escape(
-            truncate_lower_third(narration_by_scene.get(scene_id, "")),
-            quote=False,
-        )
+        narration_raw = narration_by_scene.get(scene_id, "") or ""
 
         if _is_hyperframes_scene(timing.render_path):
             # Sub-composition clip: the HyperFrames compiler inlines + scopes
@@ -132,19 +208,27 @@ def compose_html(
             )
         track += 1
 
-        if narration:
-            # Caption holds for the narration; without audio, for the slot.
-            caption_duration = audio_duration if timing.audio_path else slot_duration
-            body_parts.append(
-                f"""      <div
-        class="clip lower-third"
-        id="lower-scene-{scene_id}"
-        data-start="{start}"
-        data-duration="{caption_duration}"
-        data-track-index="{track}"
-        style="z-index:{track};">{narration}</div>"""
+        if narration_raw.strip():
+            # Chunked captions: split narration into sentence-sized pieces, each
+            # with its own timed window. Sequential windows on a single reserved
+            # track (0) -> zero overlap; no 120-char truncation -> no lost text.
+            chunks = chunk_narration(narration_raw)
+            windows = allocate_caption_windows(
+                chunks,
+                timing.actual_audio_duration_seconds if timing.audio_path else 0.0,
+                max(timing.actual_video_duration_seconds, timing.actual_audio_duration_seconds),
+                timing.start_time_seconds,
             )
-            track += 1
+            for ci, (c_start, c_dur, c_text) in enumerate(windows, start=1):
+                body_parts.append(
+                    f"""      <div
+        class="clip lower-third"
+        id="caption-scene-{scene_id}-{ci}"
+        data-start="{_format_seconds(c_start)}"
+        data-duration="{_format_seconds(c_dur)}"
+        data-track-index="{CAPTION_TRACK_INDEX}"
+        style="z-index:{CAPTION_Z_INDEX};">{html.escape(c_text, quote=False)}</div>"""
+                )
 
         if timing.audio_path:
             body_parts.append(
@@ -178,17 +262,21 @@ def compose_html(
       position: absolute;
       left: 0;
       right: 0;
-      bottom: 56px;
+      bottom: 48px;
       margin: 0 auto;
-      max-width: 1320px;
-      padding: 18px 32px;
+      max-width: 1100px;
+      padding: 14px 28px;
       border-radius: 8px;
-      background: rgba(0, 0, 0, 0.76);
+      background: rgba(0, 0, 0, 0.8);
       color: #fff;
-      font-size: 30px;
-      line-height: 1.25;
+      font-size: 28px;
+      line-height: 1.3;
       text-align: center;
       box-sizing: border-box;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
     }}
   </style>
 </head>

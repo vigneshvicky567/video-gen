@@ -16,14 +16,14 @@ A **production-grade, multi-agent microservice architecture** for generating mat
 Manim Agent Network transforms a simple topic into a fully narrated, animated video through an intelligent multi-agent pipeline:
 
 ```
-Topic → Script Writer → Code Generator → Validator → Voiceover → Assembler → Final Video
+Topic → Script Writer → Code Generator → Validator → Voiceover → Compositor → Final Video
 ```
 
 ### Key Features
 
 - **🤖 Multi-Agent Orchestration** — 6 independent microservices powered by LangGraph
 - **🎬 Manim CE Integration** — Generate stunning mathematical animations
-- **🔊 Local Voiceover** — Kokoro ONNX (CPU, offline), espeak emergency fallback
+- **🔊 Local Voiceover** — Kokoro ONNX (CPU, offline) with automatic retry
 - **♻️ Self-Healing** — Automatic retry with error feedback for failed renders
 - **🐳 Docker-Ready** — Full containerization with docker-compose
 
@@ -47,7 +47,7 @@ Topic → Script Writer → Code Generator → Validator → Voiceover → Assem
 │                                                                     │        │
 │                                                                     ▼        │
 │                                                              ┌─────────────┐ │
-│                                                              │  Assembler  │ │
+│                                                              │ Compositor  │ │
 │                                                              │  (ffmpeg)   │ │
 │                                                              └─────────────┘ │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -62,7 +62,7 @@ Topic → Script Writer → Code Generator → Validator → Voiceover → Assem
 | **Code Generator** | 8002 | Generate Manim CE Python/HyperFrames code with NVIDIA NIM |
 | **Validator** | 8003 | Execute `manim render`, capture errors |
 | **Voiceover** | 8004 | Generate local narration audio (Kokoro ONNX) |
-| **Assembler** | 8005 | Merge video + audio into final .mp4 |
+| **Compositor** | 8005 | Compose HyperFrames HTML timeline, render & assemble final .mp4 |
 
 ---
 
@@ -129,8 +129,8 @@ workspace/outputs/<job_id>_final.mp4
 | `NVIDIA_API_KEY` | - | **Required** - Your NVIDIA NIM API key |
 | `SCRIPT_WRITER_MODEL` | `moonshotai/kimi-k2-instruct` | Model for script generation |
 | `CODE_GENERATOR_MODEL` | `moonshotai/kimi-k2-instruct` | Model for code generation |
-| `VOICEOVER_PROVIDER` | `kokoro` | TTS provider: `kokoro` or `espeak` |
-| `VOICEOVER_FALLBACK_PROVIDER` | `espeak` | Emergency fallback provider |
+| `VOICEOVER_PROVIDER` | `kokoro` | TTS provider (Kokoro ONNX) |
+| `VOICEOVER_MAX_RETRIES` | `3` | Kokoro retry attempts on failure |
 | `KOKORO_VOICE` | `af_sarah` | Kokoro narrator voice |
 
 ### Voiceover Providers
@@ -143,8 +143,8 @@ VOICEOVER_PROVIDER=kokoro
 KOKORO_VOICE=af_sarah
 ```
 
-#### espeak (Emergency fallback)
-Robotic voice, only used when Kokoro fails and `ALLOW_ESPEAK_FALLBACK=true`.
+On failure, Kokoro is retried up to `VOICEOVER_MAX_RETRIES` times (default 3,
+`VOICEOVER_RETRY_BACKOFF_SECONDS` seconds apart). There is no fallback engine.
 
 ---
 
@@ -164,7 +164,7 @@ manim-agent-network/
 │   ├── Dockerfile.code-generator
 │   ├── Dockerfile.validator
 │   ├── Dockerfile.voiceover
-│   └── Dockerfile.assembler
+│   └── Dockerfile.compositor
 │
 ├── services/                   # Microservice implementations
 │   ├── orchestrator/
@@ -173,7 +173,7 @@ manim-agent-network/
 │   ├── code-generator          # Manim CE code generation
 │   ├── validator/              # Render validation & error capture
 │   ├── voiceover/              # Local TTS (Kokoro ONNX)
-│   └── assembler/              # FFmpeg video assembly
+│   └── compositor/             # HyperFrames HTML composition & render
 │
 ├── shared/                     # Common code across services
 │   ├── config.py               # Settings management

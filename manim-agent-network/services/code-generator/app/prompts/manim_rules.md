@@ -123,8 +123,11 @@ forget it — never rely on a dark background existing).
 
 ## Frame size — HARD limit
 
-The visible frame is **14.22 units wide × 8 units tall** (x ∈ [-7.1, 7.1], y ∈ [-4, 4]). Anything outside is CROPPED in the final video. The safe area is **x ∈ [-6, 6], y ∈ [-3.5, 3.5]**.
+The visible frame is **14.22 units wide × 8 units tall** (x ∈ [-7.1, 7.1], y ∈ [-4, 4]). Anything outside is CROPPED in the final video. The safe area is **x ∈ [-6, 6], y ∈ [-2.8, 3.5]**.
 
+- The bottom band **y < -2.8** (lowest ~160px of the frame) is RESERVED for narration captions overlaid by the compositor. Placing mobjects there means captions will cover them — keep all content above y = -2.8.
+- `.to_edge(DOWN, ...)` and `.to_corner(DL/DR, ...)` MUST use `buff >= 1.2` (the default 0.5 lands inside the caption band; `buff=1.2` puts the mobject's bottom at y ≈ -2.8).
+- After final layout, the whole scene's bounding box must satisfy `group.get_bottom()[1] >= -2.8`.
 - NEVER create a primitive larger than the frame: `Square(side_length=N)` with N>6 will not fit vertically; keep N ≤ 5 and prefer ≤ 3.
 - NEVER `.shift()` an object past the safe area. A 5-unit square shifted `DOWN*2.5` reaches y=-5 → cropped. Compute extent before shifting.
 - After building, the WHOLE scene's bounding box must fit. If unsure, scale it down (see below).

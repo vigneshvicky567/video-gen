@@ -28,6 +28,10 @@ class JobDatabase:
         if not hasattr(self._local, 'conn'):
             self._local.conn = sqlite3.connect(self.db_path, check_same_thread=False)
             self._local.conn.row_factory = sqlite3.Row
+            # Long jobs stream many state writes while /job reads run concurrently;
+            # WAL + a busy timeout avoid 'database is locked' under that load.
+            self._local.conn.execute("PRAGMA journal_mode=WAL")
+            self._local.conn.execute("PRAGMA busy_timeout=5000")
         try:
             yield self._local.conn
         except Exception as e:

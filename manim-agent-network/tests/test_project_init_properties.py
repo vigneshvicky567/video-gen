@@ -205,8 +205,8 @@ _REQUIRED_ENV_KEYS = [
     ("SCRIPT_WRITER_MODEL", "moonshotai/kimi-k2-instruct"),
     ("CODE_GENERATOR_MODEL", "qwen/qwen3-coder-480b-a35b-instruct"),
     ("VOICEOVER_PROVIDER", "kokoro"),
-    ("VOICEOVER_FALLBACK_PROVIDER", "espeak"),
-    ("ALLOW_ESPEAK_FALLBACK", "true"),
+    ("VOICEOVER_MAX_RETRIES", "3"),
+    ("VOICEOVER_RETRY_BACKOFF_SECONDS", "2.0"),
     ("KOKORO_VOICE", "af_sarah"),
 ]
 

@@ -1,9 +1,11 @@
 from pydantic import BaseModel
 from typing import Dict, List, Optional
-from shared.schemas.common import ScenePlan, JobState
+from shared.schemas.common import ScenePlan, JobState, GenerationBrief
 
 class ScriptWriterRequest(BaseModel):
     topic: str
+    brief: Optional[GenerationBrief] = None
+    job_id: Optional[str] = None
 
 class CodeGeneratorRequest(BaseModel):
     scene: ScenePlan

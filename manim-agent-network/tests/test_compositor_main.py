@@ -83,6 +83,7 @@ def test_assemble_success(
     
     with patch("services.compositor.app.main.settings") as mock_settings:
         mock_settings.WORKSPACE_DIR = str(tmp_path)
+        mock_settings.COMPOSITOR_CHUNK_THRESHOLD_SECONDS = 480  # single-render branch
         
         response = client.post("/assemble", json=request_data)
     
@@ -176,6 +177,7 @@ def test_assemble_hyperframes_render_failure(
     
     with patch("services.compositor.app.main.settings") as mock_settings:
         mock_settings.WORKSPACE_DIR = str(tmp_path)
+        mock_settings.COMPOSITOR_CHUNK_THRESHOLD_SECONDS = 480  # single-render branch
         
         response = client.post("/assemble", json=request_data)
     
@@ -239,6 +241,7 @@ def test_assemble_output_file_missing(
     
     with patch("services.compositor.app.main.settings") as mock_settings:
         mock_settings.WORKSPACE_DIR = str(tmp_path)
+        mock_settings.COMPOSITOR_CHUNK_THRESHOLD_SECONDS = 480  # single-render branch
         
         # Don't create the output file - it should fail
         response = client.post("/assemble", json=request_data)

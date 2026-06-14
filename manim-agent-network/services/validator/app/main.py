@@ -76,10 +76,19 @@ def _reencode_for_seek(path: str, scene_id: int) -> str:
             logger.info("Re-encoded render for seekability",
                         extra={"scene_id": scene_id, "path": out_path})
             return out_path
+        if settings.COMPOSITOR_FAIL_CLOSED:
+            raise RuntimeError(
+                f"Seek re-encode failed (rc={result.returncode}): "
+                f"{(result.stderr or '')[:300]}"
+            )
         logger.warning("Seek re-encode failed, using original render",
                        extra={"scene_id": scene_id, "rc": result.returncode,
                               "stderr": (result.stderr or "")[:300]})
+    except RuntimeError:
+        raise
     except Exception as exc:
+        if settings.COMPOSITOR_FAIL_CLOSED:
+            raise RuntimeError(f"Seek re-encode error: {exc}")
         logger.warning("Seek re-encode error, using original render",
                        extra={"scene_id": scene_id, "error": str(exc)[:200]})
     return path
@@ -284,6 +293,30 @@ def _preflight_ast_checks(source: str, scene_id: int) -> tuple:
                         "Code(code=...) was removed in Manim CE 0.20+: use Text(...) or "
                         "Paragraph(...) for text blocks"
                     )
+            # Caption safe-zone: the compositor overlays narration captions in the
+            # bottom ~160px (y < -2.8). A bare .to_edge(DOWN) / .to_corner(DL|DR)
+            # uses the default buff=0.5, dropping content into that band.
+            if isinstance(node.func, ast.Attribute) and node.func.attr in {"to_edge", "to_corner"}:
+                first = node.args[0] if node.args else None
+                edge = first.id if isinstance(first, ast.Name) else None
+                if edge in {"DOWN", "DL", "DR"}:
+                    # buff may be the 2nd positional arg (to_edge(edge, buff)) or
+                    # a keyword. Resolve from either; only flag when none is
+                    # supplied at all, or a resolved numeric buff is < 1.2.
+                    buff_kw = next((kw for kw in node.keywords if kw.arg == "buff"), None)
+                    pos_buff = node.args[1] if len(node.args) > 1 else None
+                    buff_node = buff_kw.value if buff_kw is not None else pos_buff
+                    buff_val = (
+                        buff_node.value
+                        if isinstance(buff_node, ast.Constant)
+                        and isinstance(buff_node.value, (int, float))
+                        else None
+                    )
+                    if buff_node is None or (buff_val is not None and buff_val < 1.2):
+                        issues.append(
+                            f".{node.func.attr}({edge}) without buff>=1.2 places content in the "
+                            "caption safe-zone (bottom ~160px reserved). Use buff=1.2 or larger."
+                        )
             self.generic_visit(node)
 
         def visit_Attribute(self, node: ast.Attribute):
@@ -370,7 +403,8 @@ def _warmup_latex() -> None:
 @app.on_event("startup")
 async def _on_startup() -> None:
     global _RENDER_SEMAPHORE
-    _RENDER_SEMAPHORE = asyncio.Semaphore(max(1, (os.cpu_count() or 2) // 2))
+    n = settings.VALIDATOR_MAX_CONCURRENT_RENDERS or max(1, (os.cpu_count() or 2) // 2)
+    _RENDER_SEMAPHORE = asyncio.Semaphore(n)
     _run_self_test()
     await asyncio.to_thread(_warmup_latex)
 
@@ -431,6 +465,9 @@ async def _lint_hyperframes_remote(code_path: str) -> tuple:
             return False, "HyperFrames lint errors:\n" + "\n".join(data.get("errors", []))
         return True, ""
     except Exception as exc:
+        if settings.COMPOSITOR_FAIL_CLOSED:
+            logger.error(f"hyperframes lint unavailable (fail-closed): {exc}")
+            return False, f"HyperFrames lint unavailable: {exc}"
         logger.warning(f"hyperframes lint unavailable ({exc}); proceeding without it")
         return True, ""
 

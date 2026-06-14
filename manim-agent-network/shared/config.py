@@ -32,9 +32,12 @@ class Settings(BaseSettings):
     CODE_GENERATOR_MAX_TOKENS: int = int(os.getenv("CODE_GENERATOR_MAX_TOKENS", "16384"))
 
     # ── TTS ───────────────────────────────────────────────────────────────────
-    VOICEOVER_PROVIDER: str = os.getenv("VOICEOVER_PROVIDER", "kokoro")  # kokoro | espeak
-    VOICEOVER_FALLBACK_PROVIDER: str = os.getenv("VOICEOVER_FALLBACK_PROVIDER", "espeak")
-    ALLOW_ESPEAK_FALLBACK: bool = os.getenv("ALLOW_ESPEAK_FALLBACK", "true").lower() == "true"
+    VOICEOVER_PROVIDER: str = os.getenv("VOICEOVER_PROVIDER", "kokoro")  # kokoro
+    # Kokoro is the only TTS provider. On failure the voiceover service retries
+    # Kokoro up to VOICEOVER_MAX_RETRIES times (with backoff) rather than falling
+    # back to a lower-quality engine.
+    VOICEOVER_MAX_RETRIES: int = int(os.getenv("VOICEOVER_MAX_RETRIES", "3"))
+    VOICEOVER_RETRY_BACKOFF_SECONDS: float = float(os.getenv("VOICEOVER_RETRY_BACKOFF_SECONDS", "2.0"))
 
     # Kokoro ONNX local TTS (CPU-capable, offline)
     KOKORO_MODEL_PATH: str = os.getenv("KOKORO_MODEL_PATH", "/models/kokoro/kokoro-v1.0.int8.onnx")
@@ -48,6 +51,31 @@ class Settings(BaseSettings):
     # Hard ceiling for a whole job; orchestrator aborts ainvoke past this.
     JOB_WALLCLOCK_TIMEOUT_SECONDS: float = float(os.getenv("JOB_WALLCLOCK_TIMEOUT_SECONDS", "3600"))
 
+    # ── Long-form scaling (see shared/timeouts.py) ────────────────────────────
+    JOB_TIMEOUT_BASE_SECONDS: float = float(os.getenv("JOB_TIMEOUT_BASE_SECONDS", "1800"))
+    JOB_TIMEOUT_PER_TARGET_MINUTE_SECONDS: float = float(os.getenv("JOB_TIMEOUT_PER_TARGET_MINUTE_SECONDS", "420"))
+    JOB_TIMEOUT_MAX_SECONDS: float = float(os.getenv("JOB_TIMEOUT_MAX_SECONDS", "21600"))
+    ASSEMBLER_TIMEOUT_MAX_SECONDS: float = float(os.getenv("ASSEMBLER_TIMEOUT_MAX_SECONDS", "14400"))
+
+    # ── Script council / duration budget ─────────────────────────────────────
+    SCRIPT_WORDS_PER_SECOND: float = float(os.getenv("SCRIPT_WORDS_PER_SECOND", "2.2"))
+    SCRIPT_DURATION_TOLERANCE: float = float(os.getenv("SCRIPT_DURATION_TOLERANCE", "0.10"))
+    COUNCIL_FULL_THRESHOLD_SECONDS: int = int(os.getenv("COUNCIL_FULL_THRESHOLD_SECONDS", "600"))
+    COUNCIL_MAX_PARALLEL_WRITERS: int = int(os.getenv("COUNCIL_MAX_PARALLEL_WRITERS", "4"))
+    SCRIPT_MAX_SCENES: int = int(os.getenv("SCRIPT_MAX_SCENES", "80"))
+
+    # ── Fan-out / render concurrency ─────────────────────────────────────────
+    # 0 = auto (cpu//2) on the validator side.
+    VALIDATOR_MAX_CONCURRENT_RENDERS: int = int(os.getenv("VALIDATOR_MAX_CONCURRENT_RENDERS", "0"))
+    ORCH_CODEGEN_CONCURRENCY: int = int(os.getenv("ORCH_CODEGEN_CONCURRENCY", "3"))
+    ORCH_VOICEOVER_CONCURRENCY: int = int(os.getenv("ORCH_VOICEOVER_CONCURRENCY", "4"))
+
+    # ── Compositor chunked rendering ─────────────────────────────────────────
+    COMPOSITOR_CHUNK_THRESHOLD_SECONDS: float = float(os.getenv("COMPOSITOR_CHUNK_THRESHOLD_SECONDS", "480"))
+    COMPOSITOR_CHUNK_MAX_SCENES: int = int(os.getenv("COMPOSITOR_CHUNK_MAX_SCENES", "8"))
+    COMPOSITOR_CHUNK_MAX_SECONDS: float = float(os.getenv("COMPOSITOR_CHUNK_MAX_SECONDS", "300"))
+    COMPOSITOR_CHUNK_TIMEOUT_MAX_SECONDS: float = float(os.getenv("COMPOSITOR_CHUNK_TIMEOUT_MAX_SECONDS", "3600"))
+
     # ── Service URLs (Docker internal) ────────────────────────────────────────
     SCRIPT_WRITER_URL: str = os.getenv("SCRIPT_WRITER_URL", "http://script-writer:8001")
     CODE_GENERATOR_URL: str = os.getenv("CODE_GENERATOR_URL", "http://code-generator:8002")
@@ -58,6 +86,12 @@ class Settings(BaseSettings):
     # `assembler` service is a legacy Manim-only path kept for reference.
     ASSEMBLER_URL: str = os.getenv("ASSEMBLER_URL", "http://compositor:8005")
     IMAGE_FETCHER_URL: str = os.getenv("IMAGE_FETCHER_URL", "http://image-fetcher:8006")
+
+    # Fail-open by default: when a lint subprocess or a seek re-encode cannot run,
+    # the pipeline degrades (passes lint / keeps the original render) rather than
+    # blocking the job. Set true to fail-closed — surface those tooling failures
+    # as hard errors instead of silently proceeding.
+    COMPOSITOR_FAIL_CLOSED: bool = os.getenv("COMPOSITOR_FAIL_CLOSED", "false").lower() == "true"
 
     # ── External API Keys ─────────────────────────────────────────────────────
     PEXELS_API_KEY: str = os.getenv("PEXELS_API_KEY", "")

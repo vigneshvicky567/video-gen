@@ -101,8 +101,9 @@ have a visible non-transparent background and visible foreground content.
 Visual baseline (override with explicit user-supplied palette when given):
 - Canvas: 1920×1080.
 - LAYOUT: every scene's content lives in a `.scene-content` container sized
-  `width:100%; height:100%; padding:80px 120px; display:flex; flex-direction:column;
-  gap:32px; box-sizing:border-box`. Position content with padding/flex — NEVER
+  `width:100%; height:100%; padding:80px 120px 160px; display:flex; flex-direction:column;
+  gap:32px; box-sizing:border-box`. The bottom 160px is the composition caption
+  band — keep content out of it. Position content with padding/flex — NEVER
   `position:absolute; top:Npx` on a content container (it overflows). Reserve
   `position:absolute` for decoratives only. Build the static end-state layout
   first, THEN add gsap.from() entrances.
@@ -253,8 +254,8 @@ async def _generate_hyperframes(request, run_id: str, start_time: float):
                     _tracer.update_run(run_id=run_id,
                         outputs={"code_path": file_path, "content_type": "hyperframes"},
                         end_time=time.time(), metrics={"total_latency": total})
-                except Exception:
-                    pass
+                except Exception as _trace_exc:
+                    logger.debug(f"LangSmith trace failed: {_trace_exc}")
 
             logger.info("HyperFrames HTML saved", extra={"scene_id": scene_id, "path": file_path})
             return CodeGeneratorResponse(scene_id=scene_id, code_path=file_path)
@@ -411,8 +412,8 @@ async def _generate_manim(request, run_id: str, start_time: float):
                 _tracer.update_run(run_id=run_id,
                     outputs={"code_path": file_path, "code_length": len(code_to_write)},
                     end_time=time.time(), metrics={"total_latency": total})
-            except Exception:
-                pass
+            except Exception as _trace_exc:
+                logger.debug(f"LangSmith trace failed: {_trace_exc}")
 
         logger.info("Manim code saved", extra={"scene_id": scene_id, "path": file_path, "code_lines": code.count(chr(10))})
         return CodeGeneratorResponse(scene_id=scene_id, code_path=file_path)
@@ -423,8 +424,8 @@ async def _generate_manim(request, run_id: str, start_time: float):
             try:
                 _tracer.update_run(run_id=run_id, error=str(e),
                     end_time=time.time(), metrics={"total_latency": total})
-            except Exception:
-                pass
+            except Exception as _trace_exc:
+                logger.debug(f"LangSmith trace failed: {_trace_exc}")
         logger.error("Manim generation error", extra={"scene_id": scene_id}, exc_info=True)
         raise e
 
@@ -457,8 +458,8 @@ async def generate_code(request: CodeGeneratorRequest):
                     "is_retry":     bool(request.error_log and request.previous_code),
                 }
             )
-        except Exception:
-            pass
+        except Exception as _trace_exc:
+            logger.debug(f"LangSmith trace failed: {_trace_exc}")
 
     if content_type == "manim":
         return await _generate_manim(request, run_id, start_time)

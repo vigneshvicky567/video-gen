@@ -6,10 +6,13 @@ This module provides functionality to:
 """
 
 import json
+import logging
 import subprocess
 from typing import Dict, List, Optional
 
 from shared.schemas.common import SceneTimingRecord
+
+logger = logging.getLogger(__name__)
 
 
 class AssemblyError(Exception):
@@ -74,9 +77,20 @@ def compute_scene_timings(
     Raises:
         AssemblyError: If any file cannot be probed
     """
-    # Normalize keys to int — JSON serialization turns int keys into strings
-    render_paths = {int(k): v for k, v in render_paths.items()}
-    audio_paths  = {int(k): v for k, v in audio_paths.items()}
+    # Normalize keys to int — JSON serialization turns int keys into strings.
+    # Tolerate a malformed key (e.g. "scene-0") by skipping it with a warning
+    # instead of aborting the whole composition with a bare ValueError.
+    def _coerce_int_keys(mapping: Dict, label: str) -> Dict[int, str]:
+        out = {}
+        for k, v in mapping.items():
+            try:
+                out[int(k)] = v
+            except (ValueError, TypeError):
+                logger.warning("Skipping non-integer %s key %r", label, k)
+        return out
+
+    render_paths = _coerce_int_keys(render_paths, "render_paths")
+    audio_paths  = _coerce_int_keys(audio_paths, "audio_paths")
 
     # Build estimated duration lookup from scene plans
     estimated_durations = {}
@@ -93,16 +107,36 @@ def compute_scene_timings(
         render_path = render_paths[scene_id]
         is_html = render_path.lower().endswith(".html")
         
-        # For HTML scenes, use estimated duration; for MP4, probe with ffprobe
+        # For HTML scenes, use estimated duration; for MP4, probe with ffprobe.
+        # A single unprobeable file must degrade only its own scene — falling
+        # back to the planned duration — not abort the whole composition.
         if is_html:
             video_dur = estimated_durations.get(scene_id, 5.0)
         else:
-            video_dur = probe_duration(render_path)
-        
+            try:
+                video_dur = probe_duration(render_path)
+            except AssemblyError as e:
+                video_dur = estimated_durations.get(scene_id, 5.0)
+                logger.warning(
+                    "Video probe failed for scene %s (%s); using estimated %.3fs",
+                    scene_id, e, video_dur,
+                )
+
         # A scene may legitimately have no audio (e.g. TTS skipped). Tolerate it
-        # instead of crashing the whole composition with a KeyError.
+        # instead of crashing the whole composition with a KeyError. A present
+        # but unprobeable audio file degrades to silent timing for that scene.
         audio_path = audio_paths.get(scene_id)
-        audio_dur = probe_duration(audio_path) if audio_path else 0.0
+        if audio_path:
+            try:
+                audio_dur = probe_duration(audio_path)
+            except AssemblyError as e:
+                audio_dur = 0.0
+                logger.warning(
+                    "Audio probe failed for scene %s (%s); treating as silent",
+                    scene_id, e,
+                )
+        else:
+            audio_dur = 0.0
 
         records.append(SceneTimingRecord(
             scene_id=scene_id,

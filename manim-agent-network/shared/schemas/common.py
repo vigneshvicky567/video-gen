@@ -45,5 +45,47 @@ class SceneTimingRecord(BaseModel):
     actual_audio_duration_seconds: float
     start_time_seconds: float
 
+class BriefAnswer(BaseModel):
+    question_id: str
+    selected: List[str] = Field(default_factory=list)
+    custom_text: Optional[str] = None
+
+class GenerationBrief(BaseModel):
+    target_duration_seconds: int = Field(ge=60, le=2400)
+    max_duration_seconds: Optional[int] = None  # analyzer cap, echoed for server-side clamp
+    is_study_material: bool = False
+    audience_level: Optional[str] = None
+    focus_areas: List[str] = Field(default_factory=list)
+    visual_style: Optional[str] = None
+    pacing: Optional[str] = None
+    answers: List[BriefAnswer] = Field(default_factory=list)
+
+class QuestionOption(BaseModel):
+    label: str
+    description: str = ""
+
+class AnalyzeQuestion(BaseModel):
+    id: str
+    question: str
+    header: str
+    options: List[QuestionOption]
+    multi_select: bool = False
+    allows_custom: bool = True
+
+class AnalyzeRequest(BaseModel):
+    topic: str
+
+class TopicAnalysis(BaseModel):
+    topic: str
+    feasibility_summary: str
+    recommended_duration_seconds: int
+    max_duration_seconds: int
+    duration_presets: List[int]            # seconds, e.g. [180, 300, 600, 900]
+    is_study_material: bool
+    topic_classification: str
+    questions: List[AnalyzeQuestion]       # 3-5, always includes a "duration" question
+    degraded: bool = False                 # True when LLM analysis failed -> static defaults
+
 class GenerationRequest(BaseModel):
     topic: str
+    brief: Optional[GenerationBrief] = None

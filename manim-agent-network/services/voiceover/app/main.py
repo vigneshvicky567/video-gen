@@ -155,26 +155,6 @@ def _split_text(text: str, max_chars: int = 400) -> List[str]:
     return chunks or [text]
 
 
-def generate_espeak_fallback(text: str, output_path: str) -> Tuple[bool, str]:
-    """Emergency espeak-ng fallback. Uses espeak-ng (Debian package name)."""
-    try:
-        # Ensure .wav extension — espeak-ng requires it for -w flag
-        wav_path = output_path if output_path.endswith(".wav") else output_path + ".wav"
-        # Try espeak-ng first (Debian/Ubuntu), fall back to espeak
-        for binary in ("espeak-ng", "espeak"):
-            result = subprocess.run(
-                [binary, "-w", wav_path, text],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode == 0:
-                ok, reason = _validate_audio(wav_path)
-                return ok, reason
-            logger.debug(f"{binary} not found or failed, trying next")
-        return False, "Neither espeak-ng nor espeak is available"
-    except Exception as exc:
-        return False, f"espeak generation failed: {exc}"
-
 
 def _provider_output_path(temp_dir: Path, scene_id: int, provider: str) -> str:
     suffix = "wav"
@@ -183,13 +163,10 @@ def _provider_output_path(temp_dir: Path, scene_id: int, provider: str) -> str:
 
 def _try_provider(provider: str, text: str, temp_dir: Path, scene_id: int) -> Tuple[bool, str, str]:
     output_path = _provider_output_path(temp_dir, scene_id, provider)
-    normalized = provider.lower()
-    if normalized == "kokoro":
+    if provider.lower() == "kokoro":
         ok, warning = generate_kokoro_tts(text, output_path)
-    elif normalized == "espeak" and settings.ALLOW_ESPEAK_FALLBACK:
-        ok, warning = generate_espeak_fallback(text, output_path)
     else:
-        ok, warning = False, f"Unsupported or disabled voiceover provider: {provider}"
+        ok, warning = False, f"Unsupported voiceover provider: {provider}"
     return ok, output_path, warning
 
 
@@ -203,7 +180,8 @@ async def generate_voiceover(request: VoiceoverRequest):
     run_id = str(uuid.uuid4())
     start_time = time.time()
     primary = settings.VOICEOVER_PROVIDER.lower()
-    fallback = settings.VOICEOVER_FALLBACK_PROVIDER.lower()
+    max_retries = max(1, settings.VOICEOVER_MAX_RETRIES)
+    backoff = settings.VOICEOVER_RETRY_BACKOFF_SECONDS
 
     if _tracer:
         try:
@@ -216,32 +194,28 @@ async def generate_voiceover(request: VoiceoverRequest):
                     "job_id": request.job_id,
                     "scene_id": request.scene_id,
                     "primary_provider": primary,
-                    "fallback_provider": fallback,
+                    "max_retries": max_retries,
                 },
             )
-        except Exception:
-            pass
+        except Exception as _trace_exc:
+            logger.debug(f"LangSmith trace failed: {_trace_exc}")
 
     temp_dir = Path(settings.WORKSPACE_DIR) / "temp" / request.job_id
     temp_dir.mkdir(parents=True, exist_ok=True)
 
-    attempted = []
-    for provider in (primary, fallback):
-        if provider in attempted:
-            continue
-        attempted.append(provider)
+    last_warning = ""
+    for attempt in range(1, max_retries + 1):
         # Run blocking TTS in a thread so we don't stall the event loop
         # (Kokoro ONNX inference is CPU-bound and can take several seconds)
         ok, audio_path, warning = await asyncio.to_thread(
-            _try_provider, provider, request.narration_text, temp_dir, request.scene_id
+            _try_provider, primary, request.narration_text, temp_dir, request.scene_id
         )
         if ok:
-            fallback_used = provider != primary
             if warning:
-                logger.warning("Provider warning", extra={"provider": provider, "warning": warning})
+                logger.warning("Provider warning", extra={"provider": primary, "warning": warning})
             logger.info("Voiceover produced", extra={"scene_id": request.scene_id,
-                                                      "provider": provider,
-                                                      "fallback_used": fallback_used,
+                                                      "provider": primary,
+                                                      "attempt": attempt,
                                                       "audio_path": audio_path})
             if _tracer:
                 try:
@@ -249,42 +223,32 @@ async def generate_voiceover(request: VoiceoverRequest):
                         run_id=run_id,
                         outputs={
                             "audio_path": audio_path,
-                            "provider_used": provider,
-                            "fallback_used": fallback_used,
+                            "provider_used": primary,
+                            "attempts": attempt,
                         },
                         end_time=time.time(),
                         metrics={"total_latency": time.time() - start_time},
                     )
-                except Exception:
-                    pass
+                except Exception as _trace_exc:
+                    logger.debug(f"LangSmith trace failed: {_trace_exc}")
             return VoiceoverResponse(
                 scene_id=request.scene_id,
                 audio_path=audio_path,
-                provider_used=provider,
-                fallback_used=fallback_used,
+                provider_used=primary,
+                fallback_used=False,
                 warning=warning or None,
             )
 
-        logger.warning("Provider failed", extra={"provider": provider,
-                                                   "scene_id": request.scene_id,
-                                                   "reason": warning})
+        last_warning = warning
+        logger.warning("Voiceover attempt failed", extra={"provider": primary,
+                                                           "scene_id": request.scene_id,
+                                                           "attempt": attempt,
+                                                           "max_retries": max_retries,
+                                                           "reason": warning})
+        if attempt < max_retries:
+            await asyncio.sleep(backoff)
 
-    if settings.ALLOW_ESPEAK_FALLBACK and "espeak" not in attempted:
-        ok, audio_path, warning = await asyncio.to_thread(
-            _try_provider, "espeak", request.narration_text, temp_dir, request.scene_id
-        )
-        if ok:
-            logger.warning(f"Emergency espeak fallback used for scene {request.scene_id}")
-            return VoiceoverResponse(
-                scene_id=request.scene_id,
-                audio_path=audio_path,
-                provider_used="espeak",
-                fallback_used=True,
-                warning="Emergency espeak fallback used",
-            )
-        logger.warning(warning)
-
-    message = f"Voiceover failed. Attempted providers: {', '.join(attempted)}"
+    message = f"Voiceover failed after {max_retries} attempt(s) with {primary}: {last_warning}"
     if _tracer:
         try:
             _tracer.update_run(
@@ -293,8 +257,8 @@ async def generate_voiceover(request: VoiceoverRequest):
                 end_time=time.time(),
                 metrics={"total_latency": time.time() - start_time},
             )
-        except Exception:
-            pass
+        except Exception as _trace_exc:
+            logger.debug(f"LangSmith trace failed: {_trace_exc}")
     raise HTTPException(status_code=500, detail=message)
 
 

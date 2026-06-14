@@ -87,6 +87,15 @@ tl.set(g, { opacity: 0, visibility: "hidden" }, group.end); // deterministic kil
 
 Dynamic copy: `window.__hyperframes.fitTextFontSize(text, { maxWidth, fontFamily, fontWeight })`. Group sizes: 2–3 high-energy / 3–5 conversational / 4–6 calm (captions.md L68–101).
 
+## Composition caption safe-zone — bottom 160px is RESERVED
+
+The master composition overlays narration captions across the bottom 160px of the 1920×1080 frame (y ≥ 920px). Scene content MUST stay out of that band:
+
+- NEVER absolutely position readable content with `bottom` < 160px (e.g. `bottom: 40px`) or `top` ≥ 920px.
+- The `.scene-content` container MUST use `padding: 80px 120px 160px` so flowed content cannot reach the band.
+- Full-bleed backgrounds and decorative glows MAY cross the band; text, diagrams, labels, charts, and legends MUST NOT.
+- Do NOT author your own narration lower-third — the composition owns captions. (A scene-local emphasis caption is fine ONLY if it sits above the band.)
+
 ## Forbidden / will-break patterns
 
 (SKILL.md L297–319 unless noted.)
@@ -105,6 +114,7 @@ Dynamic copy: `window.__hyperframes.fitTextFontSize(text, { maxWidth, fontFamily
 - No top-level container without `data-composition-id` (L315).
 - No `gsap.set()` on clip elements from later scenes (L318).
 - No `<br>` in content text (L319).
+- No readable content in the bottom 160px (caption safe-zone — see section above).
 - No exit animations except on the final scene — transition IS the exit; outgoing scene fully visible at transition start (L327; transitions.md L11–12).
 - Shader compositions: no `transparent` in gradients (use target color α=0); no gradient on <4px elements; no `var()` on capture-visible elements; no gradient opacity <0.15 (transitions.md L101–105).
 - Don't animate layout props (`width`/`height`/`top`/`left`) when transforms suffice (gsap/SKILL.md L229).
