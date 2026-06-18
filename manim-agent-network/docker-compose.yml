@@ -11,6 +11,7 @@ services:
     build:
       context: .
       dockerfile: infrastructure/docker/Dockerfile.orchestrator
+    restart: unless-stopped
     ports:
       - "8010:8000"
     volumes:
@@ -18,8 +19,11 @@ services:
       - ./frontend:/frontend:ro
     environment:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - NVIDIA_BASE_URL=${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
       # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-vid gen}
       - SCRIPT_WRITER_URL=http://script-writer:8001
       - CODE_GENERATOR_URL=http://code-generator:8002
       - VALIDATOR_URL=http://validator:8003
@@ -48,6 +52,7 @@ services:
     build:
       context: .
       dockerfile: infrastructure/docker/Dockerfile.script-writer
+    restart: unless-stopped
     ports:
       - "8001:8001"
     volumes:
@@ -55,8 +60,11 @@ services:
     environment:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
       - NVIDIA_API_KEYS=${NVIDIA_API_KEYS:-}
+      - NVIDIA_BASE_URL=${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
       # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-vid gen}
       - SCRIPT_WRITER_MODEL=${SCRIPT_WRITER_MODEL:-moonshotai/kimi-k2-instruct}
       - NVIDIA_RPM=${NVIDIA_RPM:-35}
       - SCRIPT_WORDS_PER_SECOND=${SCRIPT_WORDS_PER_SECOND:-2.2}
@@ -71,6 +79,7 @@ services:
     build:
       context: .
       dockerfile: infrastructure/docker/Dockerfile.code-generator
+    restart: unless-stopped
     ports:
       - "8002:8002"
     volumes:
@@ -78,14 +87,18 @@ services:
     environment:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
       - NVIDIA_API_KEYS=${NVIDIA_API_KEYS:-}
+      - NVIDIA_BASE_URL=${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
       # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-vid gen}
       - CODE_GENERATOR_MODEL=${CODE_GENERATOR_MODEL:-qwen/qwen3-coder-480b-a35b-instruct}
       - CODE_GENERATOR_TEMPERATURE=${CODE_GENERATOR_TEMPERATURE:-}
       - CODE_GENERATOR_TOP_P=${CODE_GENERATOR_TOP_P:-}
       - CODE_GENERATOR_MAX_TOKENS=${CODE_GENERATOR_MAX_TOKENS:-16384}
+      - RENDER_MODE=${RENDER_MODE:-hybrid}
       - NVIDIA_RPM=${NVIDIA_RPM:-35}
-      - NIM_MAX_CONCURRENT=3
+      - NIM_MAX_CONCURRENT=${NIM_MAX_CONCURRENT:-3}
     depends_on:
       - base
 
@@ -93,12 +106,15 @@ services:
     build:
       context: .
       dockerfile: infrastructure/docker/Dockerfile.validator
+    restart: unless-stopped
     ports:
       - "8003:8003"
     volumes:
       - ./workspace:/workspace
     environment:
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-vid gen}
       - VALIDATOR_MAX_CONCURRENT_RENDERS=${VALIDATOR_MAX_CONCURRENT_RENDERS:-0}
     depends_on:
       - base
@@ -107,12 +123,15 @@ services:
     build:
       context: .
       dockerfile: infrastructure/docker/Dockerfile.voiceover
+    restart: unless-stopped
     ports:
       - "8004:8004"
     volumes:
       - ./workspace:/workspace
     environment:
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-vid gen}
       - VOICEOVER_PROVIDER=${VOICEOVER_PROVIDER:-kokoro}
       - VOICEOVER_MAX_RETRIES=${VOICEOVER_MAX_RETRIES:-3}
       - VOICEOVER_RETRY_BACKOFF_SECONDS=${VOICEOVER_RETRY_BACKOFF_SECONDS:-2.0}
@@ -128,6 +147,7 @@ services:
     build:
       context: .
       dockerfile: infrastructure/docker/Dockerfile.image-fetcher
+    restart: unless-stopped
     ports:
       - "8006:8006"
     volumes:
@@ -135,6 +155,7 @@ services:
     environment:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
       - NVIDIA_API_KEYS=${NVIDIA_API_KEYS:-}
+      - NVIDIA_BASE_URL=${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
       # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - PEXELS_API_KEY=${PEXELS_API_KEY}
       - NVIDIA_RPM=${NVIDIA_RPM:-35}
@@ -146,6 +167,7 @@ services:
     build:
       context: .
       dockerfile: infrastructure/docker/Dockerfile.compositor
+    restart: unless-stopped
     expose:
       - "8005"
     volumes:
@@ -153,6 +175,7 @@ services:
     environment:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
       - NVIDIA_API_KEYS=${NVIDIA_API_KEYS:-}
+      - NVIDIA_BASE_URL=${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
       # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - COMPOSITOR_LLM_MODEL=${COMPOSITOR_LLM_MODEL:-moonshotai/kimi-k2-instruct}
       - COMPOSITOR_CHUNK_THRESHOLD_SECONDS=${COMPOSITOR_CHUNK_THRESHOLD_SECONDS:-480}

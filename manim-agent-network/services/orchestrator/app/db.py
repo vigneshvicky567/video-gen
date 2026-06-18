@@ -130,6 +130,48 @@ class JobDatabase:
             
             return [dict(row) for row in cursor.fetchall()]
     
+    def list_running_jobs(self, max_age_hours: int = 6) -> List[Dict[str, Any]]:
+        """Full state of recent jobs left in a non-terminal status.
+
+        Used on orchestrator startup to resume jobs whose in-memory driver task
+        died with the process. Terminal states (completed/failed) are excluded.
+        Stale jobs (older than max_age_hours) are skipped — reviving a day-old
+        orphan wastes compute on a result nobody is waiting for. Newest first so
+        the caller can resume them one at a time without flooding the services.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.execute("""
+                SELECT job_id, state_json FROM jobs
+                WHERE status NOT IN ('completed', 'failed')
+                  AND updated_at > datetime('now', '-' || ? || ' hours')
+                ORDER BY updated_at DESC
+            """, (max_age_hours,))
+            out = []
+            for row in cursor.fetchall():
+                try:
+                    out.append({"job_id": row["job_id"], "state": json.loads(row["state_json"])})
+                except (ValueError, TypeError):
+                    continue
+            return out
+
+    def mark_failed(self, job_id: str, reason: str) -> None:
+        """Force a job to failed with a reason (e.g. abandoned on shutdown)."""
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT state_json FROM jobs WHERE job_id = ?", (job_id,)).fetchone()
+            if not row:
+                return
+            try:
+                state = json.loads(row["state_json"])
+            except (ValueError, TypeError):
+                state = {}
+            state["status"] = "failed"
+            state["overall_error"] = reason
+            conn.execute("""
+                UPDATE jobs SET status='failed', state_json=?, updated_at=CURRENT_TIMESTAMP,
+                    completed_at=CURRENT_TIMESTAMP WHERE job_id=?
+            """, (json.dumps(state), job_id))
+            conn.commit()
+
     def delete_old_jobs(self, days: int = 7):
         """Delete jobs older than specified days."""
         with self._get_connection() as conn:

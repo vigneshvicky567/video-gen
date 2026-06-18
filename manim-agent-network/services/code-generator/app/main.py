@@ -8,9 +8,9 @@ import os
 import sys
 from .sanitizer import sanitize_manim_code
 from .prompts import load as load_rules
+from langsmith import traceable
 import re
 import json
-import uuid
 import time
 
 
@@ -47,16 +47,6 @@ def _run_sanitizer_self_test() -> None:
 app = FastAPI(title="Code Generator Service")
 app.add_middleware(make_request_logging_middleware("code-generator"))
 logger = get_logger(__name__)
-
-_tracer = None
-if os.getenv("LANGSMITH_API_KEY"):
-    try:
-        import langsmith
-        langsmith_client = langsmith.Client()
-        _tracer = langsmith_client
-        logger.info("LangSmith tracing enabled")
-    except ImportError:
-        logger.warning("langsmith not installed, tracing disabled")
 
 _run_sanitizer_self_test()
 
@@ -200,7 +190,7 @@ def _extract_html(text: str) -> str:
     return m.group(0) if m else text.strip()
 
 
-async def _generate_hyperframes(request, run_id: str, start_time: float):
+async def _generate_hyperframes(request):
     scene    = request.scene
     scene_id = scene.scene_id
     set_log_context(scene_id=scene_id)
@@ -247,15 +237,6 @@ async def _generate_hyperframes(request, run_id: str, start_time: float):
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(html)
             log_file(logger, "written", file_path, scene_id=scene_id, content_type="hyperframes")
-
-            total = time.time() - start_time
-            if _tracer:
-                try:
-                    _tracer.update_run(run_id=run_id,
-                        outputs={"code_path": file_path, "content_type": "hyperframes"},
-                        end_time=time.time(), metrics={"total_latency": total})
-                except Exception as _trace_exc:
-                    logger.debug(f"LangSmith trace failed: {_trace_exc}")
 
             logger.info("HyperFrames HTML saved", extra={"scene_id": scene_id, "path": file_path})
             return CodeGeneratorResponse(scene_id=scene_id, code_path=file_path)
@@ -335,16 +316,28 @@ forbidden APIs in the system rules — re-check those first.
 
 Return ONLY: {{"python_code": "..."}}"""
 
+    duration = getattr(scene, "estimated_duration_seconds", 0) or 0
+
     return f"""Create a Manim CE scene per the system rules.
 
 SCENE DETAILS:
 Scene #:    {sid}
+Duration:   {duration} seconds (the narration plays for this long)
 Narration:  {scene.narration_text}
 Visual:     {scene.visual_description}
 
 Class name MUST be exactly `Scene{sid}` (subclass of `Scene`).
 No on-screen title text (the HyperFrames layer adds the scene title).
 First line of `construct()`: `config.background_color = WHITE`.
+
+PACING — the animation should unfold across the {duration}s of narration, not
+race through in a few seconds. Spread the reveals over the whole scene: keep
+each `run_time` 0.5-3s and add `self.wait(...)` beats between steps, then end
+with a final `self.wait(...)` holding the completed visual. Aim for the sum of
+all run_times + waits to land JUST UNDER {duration}s (about {duration}s minus
+1-2s) — the final frame is held automatically until narration ends, so finishing
+slightly early is correct. Do NOT exceed {duration}s: overshooting pushes the
+video past its narration and breaks the overall timing budget.
 
 FEW-SHOT EXAMPLE (valid output for a different scene):
 ```json
@@ -354,7 +347,7 @@ FEW-SHOT EXAMPLE (valid output for a different scene):
 Return ONLY: {{"python_code": "..."}}"""
 
 
-async def _generate_manim(request, run_id: str, start_time: float):
+async def _generate_manim(request):
     scene    = request.scene
     scene_id = scene.scene_id
     set_log_context(scene_id=scene_id)
@@ -406,26 +399,10 @@ async def _generate_manim(request, run_id: str, start_time: float):
             f.write(code_to_write)
         log_file(logger, "written", file_path, scene_id=scene_id, content_type="manim")
 
-        total = time.time() - start_time
-        if _tracer:
-            try:
-                _tracer.update_run(run_id=run_id,
-                    outputs={"code_path": file_path, "code_length": len(code_to_write)},
-                    end_time=time.time(), metrics={"total_latency": total})
-            except Exception as _trace_exc:
-                logger.debug(f"LangSmith trace failed: {_trace_exc}")
-
         logger.info("Manim code saved", extra={"scene_id": scene_id, "path": file_path, "code_lines": code.count(chr(10))})
         return CodeGeneratorResponse(scene_id=scene_id, code_path=file_path)
 
     except Exception as e:
-        total = time.time() - start_time
-        if _tracer:
-            try:
-                _tracer.update_run(run_id=run_id, error=str(e),
-                    end_time=time.time(), metrics={"total_latency": total})
-            except Exception as _trace_exc:
-                logger.debug(f"LangSmith trace failed: {_trace_exc}")
         logger.error("Manim generation error", extra={"scene_id": scene_id}, exc_info=True)
         raise e
 
@@ -434,37 +411,27 @@ async def _generate_manim(request, run_id: str, start_time: float):
 # Main endpoint
 # ─────────────────────────────────────────────────────────────────────────────
 @app.post("/generate", response_model=CodeGeneratorResponse)
+@traceable(run_type="llm", name="code-generator.generate")
 async def generate_code(request: CodeGeneratorRequest):
     scene    = request.scene
     scene_id = scene.scene_id
     set_log_context(job_id=request.job_id, scene_id=scene_id)
-    content_type = scene.content_type or classify_scene(scene.narration_text, scene.visual_description)
+    # Render mode forces one engine for the whole job; "hybrid" keeps the
+    # per-scene choice (script-writer's content_type, else keyword classify).
+    # Per-request render_mode (set per job in the UI) wins over the env default.
+    mode = (request.render_mode or settings.RENDER_MODE or "hybrid").strip().lower()
+    if mode in ("manim", "hyperframes"):
+        content_type = mode
+    else:
+        content_type = scene.content_type or classify_scene(scene.narration_text, scene.visual_description)
     logger.info("Code generation request", extra={"scene_id": scene_id, "content_type": content_type,
+                                                   "render_mode": mode,
                                                    "model": settings.CODE_GENERATOR_MODEL})
 
-    run_id     = str(uuid.uuid4())
-    start_time = time.time()
-
-    if _tracer:
-        try:
-            _tracer.create_run(
-                name="code-generator.generate", run_type="llm", run_id=run_id,
-                metadata={
-                    "service":      "code-generator",
-                    "job_id":       request.job_id,
-                    "scene_id":     scene_id,
-                    "model":        settings.CODE_GENERATOR_MODEL,
-                    "content_type": content_type,
-                    "is_retry":     bool(request.error_log and request.previous_code),
-                }
-            )
-        except Exception as _trace_exc:
-            logger.debug(f"LangSmith trace failed: {_trace_exc}")
-
     if content_type == "manim":
-        return await _generate_manim(request, run_id, start_time)
+        return await _generate_manim(request)
     else:
-        return await _generate_hyperframes(request, run_id, start_time)
+        return await _generate_hyperframes(request)
 
 
 @app.get("/health")

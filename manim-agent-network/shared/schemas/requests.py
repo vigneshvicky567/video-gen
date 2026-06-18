@@ -12,6 +12,7 @@ class CodeGeneratorRequest(BaseModel):
     job_id: str
     error_log: Optional[str] = None # Present if retry
     previous_code: Optional[str] = None # Present if retry
+    render_mode: Optional[str] = None # "hybrid"|"manim"|"hyperframes"; None -> server default
 
 class ValidatorRequest(BaseModel):
     job_id: str

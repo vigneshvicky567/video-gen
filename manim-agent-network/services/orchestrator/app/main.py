@@ -8,16 +8,25 @@ from shared.log import get_logger, set_log_context, clear_log_context, make_requ
 from shared.timeouts import job_wallclock_timeout_s
 from app.core.graph import app_graph
 from app.db import db
+from langsmith import traceable
 from pathlib import Path
 import httpx
 import asyncio
 import uuid
-import os
 import time
 
 app = FastAPI(title="Orchestrator Service")
 app.add_middleware(make_request_logging_middleware("orchestrator"))
 logger = get_logger(__name__)
+
+# Job IDs with a live run_pipeline driver in THIS process. Prevents a job from
+# being driven twice at once (e.g. the resume endpoint + the startup orphan
+# scanner both firing on the same job), which races the graph and bounces status.
+_DRIVING: set[str] = set()
+
+# Job IDs the user asked to stop. The streaming loop checks this between graph
+# nodes and aborts cleanly, persisting progress so the job can be resumed later.
+_CANCEL: set[str] = set()
 
 
 @app.on_event("startup")
@@ -26,33 +35,65 @@ async def _validate_config() -> None:
     if not settings.NVIDIA_API_KEY:
         raise RuntimeError("NVIDIA_API_KEY is required but not set")
 
-_tracer = None
-if os.getenv("LANGSMITH_API_KEY"):
+
+async def _resume_worker(jobs: list) -> None:
+    """Resume orphaned jobs ONE AT A TIME.
+
+    Resuming every orphan concurrently floods the downstream services (N jobs ×
+    per-job fan-out of LLM/render calls) and can starve the event loop — observed
+    stalling an in-flight job. Serial resume keeps the load of a restart equal to
+    a single job. Newest first (list_running_jobs orders by updated_at DESC).
+    """
+    for job in jobs:
+        st = job["state"]
+        logger.info("Resuming orphaned job", extra={"job_id": job["job_id"], "status": st.get("status")})
+        try:
+            await run_pipeline(job["job_id"], st.get("topic", ""), st.get("brief"), resume_state=st)
+        except Exception as e:
+            logger.error("Resumed job failed", extra={"job_id": job["job_id"], "error": str(e)})
+
+
+@app.on_event("startup")
+async def _resume_running_jobs() -> None:
+    """Re-launch jobs orphaned by a restart.
+
+    Every graph node persists state to SQLite, but the asyncio task that drives
+    the pipeline lives only in this process — a restart strands any in-flight job
+    in its last-saved status. On boot, re-fire run_pipeline from that saved state;
+    the nodes skip already-finished scenes so it picks up where it stopped.
+    """
     try:
-        import langsmith
-        langsmith_client = langsmith.Client()
-        _tracer = langsmith_client
-        logger.info("LangSmith tracing enabled")
-    except ImportError:
-        logger.warning("langsmith not installed, tracing disabled")
+        running = db.list_running_jobs()
+    except Exception as e:
+        logger.error("Resume scan failed", extra={"error": str(e)})
+        return
+    if not running:
+        return
+    logger.info("Resuming orphaned jobs serially", extra={"count": len(running)})
+    # One background driver processes the queue serially — never blocks startup,
+    # never floods the fleet.
+    asyncio.create_task(_resume_worker(running))
 
-async def run_pipeline(job_id: str, topic: str, brief: dict | None = None):
+
+# LangSmith tracing is enabled via env (LANGSMITH_TRACING=true + LANGSMITH_API_KEY).
+# @traceable no-ops when those are unset, so this is safe to leave on always.
+@traceable(run_type="chain", name="orchestrator.pipeline")
+async def run_pipeline(job_id: str, topic: str, brief: dict | None = None,
+                       resume_state: LangGraphState | None = None):
     set_log_context(job_id=job_id)
-    logger.info("Pipeline starting", extra={"topic": topic})
+    # Guard against a second concurrent driver for the same job.
+    if job_id in _DRIVING:
+        logger.warning("Pipeline already running for this job — skipping duplicate driver")
+        return {"status": "already_running"}
+    _DRIVING.add(job_id)
+    logger.info("Pipeline starting", extra={"topic": topic, "resumed": resume_state is not None})
 
-    run_id = str(uuid.uuid4())
     start_time = time.time()
 
-    if _tracer:
-        try:
-            _tracer.create_run(
-                name="orchestrator.pipeline", run_type="chain", run_id=run_id,
-                metadata={"service": "orchestrator", "job_id": job_id, "topic": topic}
-            )
-        except Exception as e:
-            logger.debug(f"LangSmith trace start failed: {e}")
-
-    initial_state: LangGraphState = {
+    # Resume from a persisted mid-flight state (orchestrator restart) or start
+    # fresh. The graph nodes skip any scene already in render_paths/audio_paths,
+    # so re-streaming a saved state fast-forwards to the first unfinished scene.
+    initial_state: LangGraphState = resume_state or {
         "job_id": job_id, "topic": topic, "status": "pending",
         "script": None, "code_paths": {}, "render_paths": {}, "audio_paths": {},
         "image_paths": {},
@@ -77,6 +118,12 @@ async def run_pipeline(job_id: str, topic: str, brief: dict | None = None):
             async for state in app_graph.astream(initial_state, stream_mode="values"):
                 last_state = state
                 db.update_job(job_id, state)
+                # User pressed Stop: halt between nodes, preserving progress so the
+                # job can be resumed. Raise CancelledError to unwind the stream.
+                if job_id in _CANCEL:
+                    _CANCEL.discard(job_id)
+                    logger.info("Pipeline cancelled by user")
+                    raise asyncio.CancelledError()
             return last_state
 
         final_state = await asyncio.wait_for(
@@ -90,13 +137,17 @@ async def run_pipeline(job_id: str, topic: str, brief: dict | None = None):
             "Pipeline finished",
             extra={"status": final_state["status"], "scenes": scene_count, "elapsed_s": round(elapsed, 2)},
         )
-        if _tracer:
-            try:
-                _tracer.update_run(run_id=run_id,
-                    outputs={"status": final_state.get("status"), "scenes": scene_count},
-                    end_time=time.time(), metrics={"total_latency": elapsed})
-            except Exception:
-                pass
+        # Returned value is captured as the trace's outputs by @traceable.
+        return {"status": final_state.get("status"), "scenes": scene_count,
+                "elapsed_s": round(elapsed, 2)}
+    except asyncio.CancelledError:
+        # User-initiated stop. Persist a 'cancelled' record that KEEPS progress
+        # (renders/audio) so Resume can pick it back up. Don't re-raise — this is
+        # a clean, expected stop, not a crash.
+        logger.info("Pipeline stopped (cancelled)")
+        db.update_job(job_id, {**last_state, "status": "cancelled",
+                               "overall_error": "Stopped by user."})
+        return {"status": "cancelled"}
     except asyncio.TimeoutError:
         elapsed = time.time() - start_time
         logger.error("Pipeline timed out", extra={"elapsed_s": round(elapsed, 2),
@@ -107,28 +158,20 @@ async def run_pipeline(job_id: str, topic: str, brief: dict | None = None):
             "overall_error": f"Job exceeded wall-clock timeout of {timeout_s}s",
         }
         db.update_job(job_id, failed_state)
-        if _tracer:
-            try:
-                _tracer.update_run(run_id=run_id, error="wall-clock timeout",
-                    end_time=time.time(), metrics={"total_latency": elapsed})
-            except Exception:
-                pass
+        # Re-raise so the trace records the failure, not a silent success.
+        raise
     except Exception as e:
         elapsed = time.time() - start_time
         logger.error("Pipeline crashed", extra={"elapsed_s": round(elapsed, 2)}, exc_info=True)
-        if _tracer:
-            try:
-                _tracer.update_run(run_id=run_id, error=str(e),
-                    end_time=time.time(), metrics={"total_latency": elapsed})
-            except Exception:
-                pass
         failed_state = {
             **last_state,
             "status": "failed",
             "overall_error": str(e),
         }
         db.update_job(job_id, failed_state)
+        raise
     finally:
+        _DRIVING.discard(job_id)
         clear_log_context()
 
 
@@ -159,6 +202,12 @@ async def start_generation(request: GenerationRequest, background_tasks: Backgro
             brief["target_duration_seconds"], brief["max_duration_seconds"]
         )
 
+    # Carry the per-job render mode in the brief so it rides through job state
+    # into the code-generator node without touching run_pipeline's signature.
+    if request.render_mode:
+        brief = dict(brief or {})
+        brief["render_mode"] = request.render_mode
+
     # Durable initial record so /job survives an orchestrator restart.
     db.create_job(job_id, request.topic, {
         "job_id": job_id,
@@ -178,6 +227,55 @@ async def get_job_status(job_id: str):
     if state is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return state
+
+
+@app.post("/job/{job_id}/cancel", response_model=dict)
+async def cancel_job(job_id: str):
+    """Stop a running job. The streaming loop checks _CANCEL between graph nodes
+    and halts cleanly, persisting progress so the job can be resumed."""
+    state = db.get_job(job_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job_id not in _DRIVING:
+        # No live driver — just mark it cancelled if it's still in a running state.
+        if state.get("status") not in ("completed", "failed", "cancelled"):
+            db.update_job(job_id, {**state, "status": "cancelled",
+                                   "overall_error": "Stopped by user."})
+        return {"job_id": job_id, "message": "Job not actively running; marked cancelled."}
+    _CANCEL.add(job_id)
+    return {"job_id": job_id, "message": "Stop requested."}
+
+
+@app.post("/job/{job_id}/resume", response_model=dict)
+async def resume_job(job_id: str, background_tasks: BackgroundTasks):
+    """Re-run a failed/stalled job from its persisted state.
+
+    The graph nodes skip scenes already in render_paths/audio_paths, so resuming
+    re-does only unfinished work. Re-enter at 'validation' (a no-op when renders
+    exist) so the run routes straight to whatever stage actually failed. Audio is
+    cleared so a fixed voiceover regenerates cleanly.
+    """
+    state = db.get_job(job_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    # Never double-drive: refuse if a driver is already live for this job, or if
+    # the persisted status is a mid-pipeline running state.
+    if job_id in _DRIVING:
+        raise HTTPException(status_code=409, detail="Job is already running")
+    if state.get("status") not in ("failed", "completed", "starting", "pending", "code_generation",
+                                   "validation", "voiceover_and_images", "assembly", "script_generation"):
+        raise HTTPException(status_code=409, detail=f"Job is {state.get('status')}; cannot resume")
+
+    state.pop("webhook_url", None)
+    state["status"] = "validation"
+    state["overall_error"] = None
+    state["audio_paths"] = {}
+    db.update_job(job_id, state)
+
+    background_tasks.add_task(
+        run_pipeline, job_id, state.get("topic", ""), state.get("brief"), state
+    )
+    return {"job_id": job_id, "message": "Resume started."}
 
 @app.get("/jobs", response_model=list)
 async def list_jobs(status: str | None = None, limit: int = 100):

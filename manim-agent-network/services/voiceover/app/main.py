@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import subprocess
 import time
-import uuid
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -13,20 +11,12 @@ from fastapi import FastAPI, HTTPException
 from shared.config import settings
 from shared.schemas.requests import VoiceoverRequest
 from shared.schemas.responses import VoiceoverResponse
-from shared.log import get_logger, set_log_context, timed_block, log_file, make_request_logging_middleware
+from shared.log import get_logger, set_log_context, log_file, make_request_logging_middleware
+from langsmith import traceable
 
 app = FastAPI(title="Voiceover Service")
 app.add_middleware(make_request_logging_middleware("voiceover"))
 logger = get_logger(__name__)
-
-_tracer = None
-if os.getenv("LANGSMITH_API_KEY"):
-    try:
-        import langsmith
-        _tracer = langsmith.Client()
-        logger.info("LangSmith tracing enabled")
-    except ImportError:
-        logger.warning("langsmith not installed, tracing disabled")
 
 _kokoro = None
 
@@ -74,38 +64,75 @@ def _get_kokoro():
     return _kokoro
 
 
+def _clean_for_tts(text: str) -> str:
+    """Normalise narration for eSpeak. Collapse whitespace and drop characters
+    that make kokoro-onnx's phonemizer emit a mismatched input/output line count
+    ("number of lines in input and output must be equal") and crash TTS."""
+    import re
+    import unicodedata
+
+    # 1. Normalise Unicode, then map common typographic chars to ASCII. The real
+    #    crasher was U+FFFD (mojibake from a smart apostrophe) surviving into espeak.
+    text = unicodedata.normalize("NFKC", text)
+    table = {
+        "’": "'", "‘": "'", "“": "", "”": "",   # smart quotes
+        "–": ", ", "—": ", ", "…": " ",              # dashes, ellipsis
+        "�": "",                                                # replacement char
+    }
+    for k, v in table.items():
+        text = text.replace(k, v)
+
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[;:]", ", ", text)                   # semicolon/colon -> comma
+    text = re.sub(r"[*_`#>|~^\\/{}\[\]<>=+]", " ", text)  # markdown/symbols -> space
+    text = text.replace('"', "")                        # straight quotes confuse line count
+
+    # 2. Hard guarantee: strip anything still outside printable ASCII so no stray
+    #    Unicode (control chars, leftover replacement chars, exotic punctuation)
+    #    can reach espeak and desync its input/output line count.
+    text = "".join(c for c in text if 32 <= ord(c) < 127)
+
+    text = re.sub(r"\s+", " ", text)                     # re-collapse
+    return text.strip()
+
+
 def generate_kokoro_tts(text: str, output_path: str) -> Tuple[bool, str]:
     try:
         import numpy as np
         import soundfile as sf
 
         kokoro = _get_kokoro()
-        chunks = _split_text(text)
-        logger.info("Kokoro TTS", extra={"chunks": len(chunks), "text_chars": len(text)})
+        # Generate one sentence at a time. eSpeak's line-mismatch crash is
+        # content-dependent; isolating sentences means a single bad one is
+        # SKIPPED (logged) instead of failing the whole scene's narration.
+        sentences = _split_sentences(_clean_for_tts(text))
+        logger.info("Kokoro TTS", extra={"sentences": len(sentences), "text_chars": len(text)})
 
-        if len(chunks) == 1:
-            samples, sample_rate = kokoro.create(
-                chunks[0],
-                voice=settings.KOKORO_VOICE,
-                speed=float(settings.KOKORO_SPEED),
-                lang=settings.KOKORO_LANG,
-            )
-        else:
-            logger.info(f"Kokoro: splitting {len(text)} chars into {len(chunks)} chunks")
-            all_samples = []
-            sample_rate = 24000
-            silence = np.zeros(int(sample_rate * 0.25), dtype=np.float32)  # 250ms gap
-            for chunk in chunks:
+        sample_rate = 24000
+        silence = np.zeros(int(sample_rate * 0.15), dtype=np.float32)  # 150ms gap
+        all_samples = []
+        skipped = 0
+        for sent in sentences:
+            try:
                 s, sample_rate = kokoro.create(
-                    chunk,
+                    sent,
                     voice=settings.KOKORO_VOICE,
                     speed=float(settings.KOKORO_SPEED),
                     lang=settings.KOKORO_LANG,
                 )
                 all_samples.append(s)
                 all_samples.append(silence)
-            samples = np.concatenate(all_samples[:-1])  # drop trailing silence
+            except Exception as se:
+                skipped += 1
+                logger.warning("Kokoro skipped a sentence", extra={"error": str(se)[:120],
+                                                                    "sentence": sent[:80]})
 
+        if not all_samples:
+            return False, "Kokoro produced no audio (every sentence failed phonemization)"
+        if skipped:
+            logger.warning(f"Kokoro skipped {skipped}/{len(sentences)} sentences")
+
+        samples = np.concatenate(all_samples[:-1])  # drop trailing silence
         sf.write(output_path, samples, sample_rate)
         ok, reason = _validate_audio(output_path)
         if ok:
@@ -118,41 +145,32 @@ def generate_kokoro_tts(text: str, output_path: str) -> Tuple[bool, str]:
         return False, f"Kokoro generation failed: {exc}"
 
 
-def _split_text(text: str, max_chars: int = 400) -> List[str]:
-    """Split text into sentence-boundary chunks under max_chars."""
-    if len(text) <= max_chars:
-        return [text]
-
+def _split_sentences(text: str, max_chars: int = 400) -> List[str]:
+    """Sentence-boundary split, with over-long sentences broken on commas then
+    hard-wrapped. Keeps each piece small so eSpeak phonemizes it cleanly."""
     import re
-    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
-    chunks: List[str] = []
-    current = ""
-    for sentence in sentences:
-        if len(current) + len(sentence) + 1 <= max_chars:
-            current = f"{current} {sentence}".strip()
-        else:
-            if current:
-                chunks.append(current)
-            # If a single sentence exceeds max_chars, split on commas
-            if len(sentence) > max_chars:
-                parts = re.split(r'(?<=,)\s+', sentence)
-                sub = ""
-                for part in parts:
-                    if len(sub) + len(part) + 1 <= max_chars:
-                        sub = f"{sub} {part}".strip()
-                    else:
-                        if sub:
-                            chunks.append(sub)
-                        sub = part
-                if sub:
-                    current = sub
-                else:
-                    current = ""
-            else:
-                current = sentence
-    if current:
-        chunks.append(current)
-    return chunks or [text]
+    if not text:
+        return []
+    pieces = re.split(r'(?<=[.!?])\s+', text)
+    out: List[str] = []
+    for p in pieces:
+        p = p.strip()
+        if not p:
+            continue
+        if len(p) <= max_chars:
+            out.append(p)
+            continue
+        # over-long: split on commas, then hard-wrap any remaining giant span
+        for part in re.split(r'(?<=,)\s+', p):
+            part = part.strip()
+            while len(part) > max_chars:
+                out.append(part[:max_chars])
+                part = part[max_chars:]
+            if part:
+                out.append(part)
+    return out
+
+
 
 
 
@@ -171,34 +189,17 @@ def _try_provider(provider: str, text: str, temp_dir: Path, scene_id: int) -> Tu
 
 
 @app.post("/generate", response_model=VoiceoverResponse)
+@traceable(run_type="chain", name="voiceover.generate")
 async def generate_voiceover(request: VoiceoverRequest):
     set_log_context(job_id=request.job_id, scene_id=request.scene_id)
     logger.info("Voiceover request", extra={"scene_id": request.scene_id,
                                              "text_chars": len(request.narration_text),
                                              "provider": settings.VOICEOVER_PROVIDER})
 
-    run_id = str(uuid.uuid4())
     start_time = time.time()
     primary = settings.VOICEOVER_PROVIDER.lower()
     max_retries = max(1, settings.VOICEOVER_MAX_RETRIES)
     backoff = settings.VOICEOVER_RETRY_BACKOFF_SECONDS
-
-    if _tracer:
-        try:
-            _tracer.create_run(
-                name="voiceover.generate",
-                run_type="chain",
-                run_id=run_id,
-                metadata={
-                    "service": "voiceover",
-                    "job_id": request.job_id,
-                    "scene_id": request.scene_id,
-                    "primary_provider": primary,
-                    "max_retries": max_retries,
-                },
-            )
-        except Exception as _trace_exc:
-            logger.debug(f"LangSmith trace failed: {_trace_exc}")
 
     temp_dir = Path(settings.WORKSPACE_DIR) / "temp" / request.job_id
     temp_dir.mkdir(parents=True, exist_ok=True)
@@ -217,20 +218,6 @@ async def generate_voiceover(request: VoiceoverRequest):
                                                       "provider": primary,
                                                       "attempt": attempt,
                                                       "audio_path": audio_path})
-            if _tracer:
-                try:
-                    _tracer.update_run(
-                        run_id=run_id,
-                        outputs={
-                            "audio_path": audio_path,
-                            "provider_used": primary,
-                            "attempts": attempt,
-                        },
-                        end_time=time.time(),
-                        metrics={"total_latency": time.time() - start_time},
-                    )
-                except Exception as _trace_exc:
-                    logger.debug(f"LangSmith trace failed: {_trace_exc}")
             return VoiceoverResponse(
                 scene_id=request.scene_id,
                 audio_path=audio_path,
@@ -249,16 +236,6 @@ async def generate_voiceover(request: VoiceoverRequest):
             await asyncio.sleep(backoff)
 
     message = f"Voiceover failed after {max_retries} attempt(s) with {primary}: {last_warning}"
-    if _tracer:
-        try:
-            _tracer.update_run(
-                run_id=run_id,
-                error=message,
-                end_time=time.time(),
-                metrics={"total_latency": time.time() - start_time},
-            )
-        except Exception as _trace_exc:
-            logger.debug(f"LangSmith trace failed: {_trace_exc}")
     raise HTTPException(status_code=500, detail=message)
 
 

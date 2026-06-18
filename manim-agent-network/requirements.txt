@@ -19,7 +19,7 @@ python-dotenv>=1.0.0
 # httpx is already listed above and is used to call the local API server.
 
 # LangSmith Tracing
-langsmith>=0.1.0
+langsmith>=0.4.0
 
 # Testing
 hypothesis==6.112.2

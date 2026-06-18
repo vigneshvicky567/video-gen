@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     CODE_GENERATOR_TEMPERATURE: str = os.getenv("CODE_GENERATOR_TEMPERATURE", "")
     CODE_GENERATOR_TOP_P: str = os.getenv("CODE_GENERATOR_TOP_P", "")
     CODE_GENERATOR_MAX_TOKENS: int = int(os.getenv("CODE_GENERATOR_MAX_TOKENS", "16384"))
+    # Render engine: "hybrid" (default — per-scene auto-pick via content_type),
+    # "manim" (force every scene through Manim), or "hyperframes" (force all HTML).
+    RENDER_MODE: str = os.getenv("RENDER_MODE", "hybrid")
 
     # ── TTS ───────────────────────────────────────────────────────────────────
     VOICEOVER_PROVIDER: str = os.getenv("VOICEOVER_PROVIDER", "kokoro")  # kokoro

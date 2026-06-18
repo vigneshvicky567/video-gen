@@ -3,14 +3,13 @@ from shared.schemas.requests import ValidatorRequest
 from shared.schemas.responses import ValidatorResponse
 from shared.config import settings
 from shared.log import get_logger, set_log_context, timed_block, log_subprocess, log_file, make_request_logging_middleware
+from langsmith import traceable
 import asyncio
 import subprocess
 import os
 import re
 import sys
 import glob
-import uuid
-import time
 import ast
 
 app = FastAPI(title="Validator Service")
@@ -343,17 +342,6 @@ def _preflight_ast_checks(source: str, scene_id: int) -> tuple:
         return False, "\n".join(issues)
     return True, ""
 
-# LangSmith tracer setup
-_tracer = None
-if os.getenv("LANGSMITH_API_KEY"):
-    try:
-        import langsmith
-        langsmith_client = langsmith.Client()
-        _tracer = langsmith_client
-        logger.info("LangSmith tracing enabled")
-    except ImportError:
-        logger.warning("langsmith not installed, tracing disabled")
-
 
 def _run_self_test() -> None:
     """Fail-fast on stale images: confirm AST preflight catches a known-bad source."""
@@ -409,39 +397,19 @@ async def _on_startup() -> None:
     await asyncio.to_thread(_warmup_latex)
 
 @app.post("/validate", response_model=ValidatorResponse)
+@traceable(run_type="chain", name="validator.validate")
 async def validate_code(request: ValidatorRequest):
     set_log_context(job_id=request.job_id, scene_id=request.scene_id)
     content_type = detect_content_type(request.code_path)
     logger.info("Validation request", extra={"scene_id": request.scene_id,
                                               "content_type": content_type,
                                               "code_path": request.code_path})
-    
-    # Start LangSmith trace
-    run_id = str(uuid.uuid4())
-    start_time = time.time()
-    
-    if _tracer:
-        try:
-            _tracer.create_run(
-                name="validator.validate",
-                run_type="chain",
-                run_id=run_id,
-                metadata={
-                    "service": "validator",
-                    "job_id": request.job_id,
-                    "scene_id": request.scene_id,
-                    "code_path": request.code_path,
-                    "content_type": content_type
-                }
-            )
-        except Exception as e:
-            logger.debug(f"LangSmith trace start failed: {e}")
 
     # Route based on content type
     if content_type == "hyperframes":
-        return await _validate_hyperframes(request, run_id, start_time)
+        return await _validate_hyperframes(request)
     else:
-        return await _validate_manim(request, run_id, start_time)
+        return await _validate_manim(request)
 
 
 async def _lint_hyperframes_remote(code_path: str) -> tuple:
@@ -472,7 +440,7 @@ async def _lint_hyperframes_remote(code_path: str) -> tuple:
         return True, ""
 
 
-async def _validate_hyperframes(request, run_id, start_time):
+async def _validate_hyperframes(request):
     """Validate HyperFrames HTML content."""
     logger.info(f"Validating HyperFrames HTML for scene {request.scene_id}")
 
@@ -488,19 +456,6 @@ async def _validate_hyperframes(request, run_id, start_time):
             if not lint_ok:
                 success, render_path, error = False, "", lint_error
 
-        total_duration = time.time() - start_time
-        
-        if _tracer:
-            try:
-                _tracer.update_run(
-                    run_id=run_id,
-                    outputs={"success": success, "render_path": render_path},
-                    end_time=time.time(),
-                    metrics={"total_latency": total_duration}
-                )
-            except Exception:
-                pass
-        
         if success:
             return ValidatorResponse(
                 scene_id=request.scene_id,
@@ -513,24 +468,13 @@ async def _validate_hyperframes(request, run_id, start_time):
                 success=False,
                 error_log=error
             )
-            
+
     except Exception as e:
-        total_duration = time.time() - start_time
-        if _tracer:
-            try:
-                _tracer.update_run(
-                    run_id=run_id,
-                    error=str(e),
-                    end_time=time.time(),
-                    metrics={"total_latency": total_duration}
-                )
-            except Exception:
-                pass
         logger.error(f"Error validating HyperFrames: {str(e)}")
         raise e
 
 
-async def _validate_manim(request, run_id, start_time):
+async def _validate_manim(request):
     """Validate Manim Python code."""
     logger.info(f"Validating Manim code for scene {request.scene_id}")
 
@@ -596,8 +540,6 @@ async def _validate_manim(request, run_id, start_time):
             search_mp4 = os.path.join(output_dir, "videos", "*", "*", f"{scene_class_name}.mp4")
             mp4_files = glob.glob(search_mov) or glob.glob(search_mp4)
 
-            total_duration = time.time() - start_time
-            
             if mp4_files:
                 if any("480p15" in p.replace("\\", "/") for p in mp4_files):
                     logger.error("Manim produced 480p15 output — wrong quality flag", extra={"paths": mp4_files})
@@ -609,17 +551,6 @@ async def _validate_manim(request, run_id, start_time):
                 logger.info("Render output found", extra={"scene_id": request.scene_id, "path": mp4_files[0]})
                 final_path = await asyncio.to_thread(
                     _reencode_for_seek, mp4_files[0], request.scene_id)
-                # Final trace update
-                if _tracer:
-                    try:
-                        _tracer.update_run(
-                            run_id=run_id,
-                            outputs={"render_path": final_path, "success": True},
-                            end_time=time.time(),
-                            metrics={"total_latency": total_duration}
-                        )
-                    except Exception:
-                        pass
 
                 return ValidatorResponse(
                     scene_id=request.scene_id,
@@ -627,18 +558,6 @@ async def _validate_manim(request, run_id, start_time):
                     render_path=final_path
                 )
             else:
-                total_duration = time.time() - start_time
-                if _tracer:
-                    try:
-                        _tracer.update_run(
-                            run_id=run_id,
-                            outputs={"success": False, "error": "mp4 not found"},
-                            end_time=time.time(),
-                            metrics={"total_latency": total_duration}
-                        )
-                    except Exception:
-                        pass
-                
                 return ValidatorResponse(
                     scene_id=request.scene_id,
                     success=False,
@@ -658,19 +577,7 @@ async def _validate_manim(request, run_id, start_time):
                 logger.error(f"=== FAILED CODE scene {request.scene_id} ===\n{code_content}")
             except Exception as read_err:
                 logger.error(f"Could not read code file: {read_err}")
-            
-            total_duration = time.time() - start_time
-            if _tracer:
-                try:
-                    _tracer.update_run(
-                        run_id=run_id,
-                        outputs={"success": False, "error": error_log[:500]},
-                        end_time=time.time(),
-                        metrics={"total_latency": total_duration}
-                    )
-                except Exception:
-                    pass
-            
+
             return ValidatorResponse(
                 scene_id=request.scene_id,
                 success=False,
@@ -678,18 +585,6 @@ async def _validate_manim(request, run_id, start_time):
             )
 
     except subprocess.TimeoutExpired:
-        total_duration = time.time() - start_time
-        if _tracer:
-            try:
-                _tracer.update_run(
-                    run_id=run_id,
-                    outputs={"success": False, "error": "timeout"},
-                    end_time=time.time(),
-                    metrics={"total_latency": total_duration}
-                )
-            except Exception:
-                pass
-        
         return ValidatorResponse(
             scene_id=request.scene_id,
             success=False,
@@ -697,18 +592,6 @@ async def _validate_manim(request, run_id, start_time):
         )
 
     except Exception as e:
-        total_duration = time.time() - start_time
-        if _tracer:
-            try:
-                _tracer.update_run(
-                    run_id=run_id,
-                    error=str(e),
-                    end_time=time.time(),
-                    metrics={"total_latency": total_duration}
-                )
-            except Exception:
-                pass
-        
         logger.error(f"Error validating code: {str(e)}")
         raise e
 

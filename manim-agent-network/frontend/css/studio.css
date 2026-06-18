@@ -13,6 +13,7 @@
   --serif:'Fraunces','Georgia',serif;
 }
 *{box-sizing:border-box;margin:0;padding:0}
+[hidden]{display:none!important}   /* author display:flex was overriding the bare [hidden] attr */
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 html{scroll-behavior:smooth}
 body{background:var(--ink)}
@@ -80,12 +81,15 @@ button{font-family:inherit}
 .jobid:hover{color:var(--signal);border-color:var(--signal)}
 
 .screen{
-  position:relative;aspect-ratio:21/9;border-radius:6px;overflow:hidden;
+  position:relative;aspect-ratio:16/9;width:100%;max-width:min(1040px, calc(56vh * 16 / 9));margin-inline:auto;
+  border-radius:14px;overflow:hidden;--media-border-radius:14px;
   background:radial-gradient(130% 130% at 50% 0%,#1b1f2e,#070810 72%);
   border:1px solid var(--line);
   box-shadow:0 0 0 1px rgba(216,255,62,.04),0 40px 120px -40px rgba(216,255,62,.12);
 }
-.screen .screenvid{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:1}
+/* video.js v10: <video-player> is display:contents (per skin), so the media-container
+   itself fills the projection frame. Just make it fill .screen. */
+.screen .media-default-skin{position:absolute;inset:0;width:100%;height:100%}
 .screen .grain{position:absolute;inset:0;opacity:.5;pointer-events:none;z-index:2;
   background-image:radial-gradient(circle at 50% 50%,transparent,rgba(0,0,0,.35))}
 .screen .cap{position:absolute;inset:0;display:flex;align-items:flex-end;justify-content:center;padding-bottom:88px;z-index:3;transition:opacity .3s}
@@ -148,26 +152,87 @@ button{font-family:inherit}
 .frame[data-st="coding"] .ok::before,.frame[data-st="retry"] .ok::before{animation:pulse 1.2s infinite}
 .frame .du{font-family:var(--mono);font-size:10px;color:var(--muted-2)}
 
-/* ===== PIPELINE: horizontal developing track ===== */
-.devtrack{margin:38px 30px 0}
-.dev-stages{display:flex;align-items:stretch;gap:0;position:relative;margin-top:30px}
-.dev-stages .conn{position:absolute;top:38px;left:6%;right:6%;height:2px;background:var(--line);z-index:0}
-.dev-stages .conn i{position:absolute;inset:0 auto 0 0;width:0%;background:linear-gradient(90deg,var(--signal),var(--teal));box-shadow:0 0 10px rgba(216,255,62,.4);transition:width .5s var(--e,cubic-bezier(.16,1,.3,1))}
-.dev-node{flex:1;display:flex;flex-direction:column;align-items:center;gap:14px;position:relative;z-index:1}
-.dev-node .orb{width:62px;height:62px;border-radius:50%;background:var(--ink-2);border:1.5px solid var(--line);display:flex;align-items:center;justify-content:center;transition:.35s}
-.dev-node .orb svg{stroke:var(--muted-2);transition:.35s}
-.dev-node.done .orb{border-color:var(--teal);box-shadow:0 0 16px rgba(79,209,197,.25)}
-.dev-node.done .orb svg{stroke:var(--teal)}
-.dev-node.cur .orb{border-color:var(--signal);box-shadow:0 0 22px rgba(216,255,62,.4);animation:throb 1.4s infinite}
-.dev-node.cur .orb svg{stroke:var(--signal)}
-.dev-node.fail .orb{border-color:var(--rose);box-shadow:0 0 18px rgba(255,107,107,.35)}
-.dev-node.fail .orb svg{stroke:var(--rose)}
-@keyframes throb{50%{box-shadow:0 0 30px rgba(216,255,62,.6)}}
-.dev-node .nm{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
-.dev-node .st{font-family:var(--mono);font-size:9.5px;color:var(--muted-2)}
-.dev-node.done .st{color:var(--teal)}
-.dev-node.cur .st{color:var(--signal)}
-.dev-node.fail .st{color:var(--rose)}
+/* ===== PIPELINE: fan-out developing track ===== */
+/* Script splits into N parallel scene agents → converge into Assemble → Film.
+   Layout: [cap] [fan rail] [scene band] [merge rail] [cap stack]. */
+/* framed card holding the whole fan-out, like the architecture diagram */
+.devtrack{margin:26px auto 0;max-width:1180px;border:1px solid var(--line-soft);border-radius:18px;
+  background:radial-gradient(120% 100% at 50% 0%,rgba(79,209,197,.03),transparent 60%),var(--ink-2);
+  padding:30px 40px 38px;overflow:hidden}
+/* SCRIPT ── fan ── [ band ] ── merge ── ASSEMBLE/FILM */
+.fanout{display:grid;grid-template-columns:auto minmax(70px,110px) minmax(0,1fr) minmax(70px,110px) auto;align-items:stretch;gap:0;margin-top:18px}
+@keyframes throb{50%{box-shadow:0 0 24px rgba(216,255,62,.55)}}
+
+/* ── endpoint nodes (Script / Assemble / Film) ── */
+.cap-col{display:flex;flex-direction:column;justify-content:center;gap:34px}
+.cap-node{display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center}
+.cap-node .orb{position:relative;width:62px;height:62px;border-radius:50%;background:var(--ink-2);border:1.5px solid var(--line);display:flex;align-items:center;justify-content:center;transition:.35s}
+.cap-node .orb svg{width:23px;height:23px;stroke:var(--muted-2);transition:.35s}
+.cap-node.done .orb{border-color:var(--teal);box-shadow:0 0 18px rgba(79,209,197,.28)}
+.cap-node.done .orb svg{stroke:var(--teal)}
+.cap-node.cur .orb{border-color:var(--signal);box-shadow:0 0 0 5px rgba(216,255,62,.10),0 0 34px rgba(216,255,62,.5);animation:throb 1.6s infinite}
+.cap-node.cur .orb svg{stroke:var(--signal)}
+.cap-node.fail .orb{border-color:var(--rose);box-shadow:0 0 22px rgba(255,107,107,.4)}
+.cap-node.fail .orb svg{stroke:var(--rose)}
+.cap-node .nm{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--paper);font-weight:500}
+.cap-node .sub{font-family:var(--mono);font-size:8px;letter-spacing:.03em;color:var(--muted-2)}
+.cap-node .st{font-family:var(--mono);font-size:8.5px;letter-spacing:.08em;color:var(--muted-2)}
+.cap-node.done .st{color:var(--teal)}
+.cap-node.cur .st{color:var(--signal)}
+.cap-node.fail .st{color:var(--rose)}
+/* the cap status word floats above the orb (matches "in progress" in the img) */
+.cap-col:not(.converge) .cap-node{flex-direction:column}
+.cap-node .st:empty{display:none}
+
+/* ── connector rails (smooth bezier, glow + traveling dot) ── */
+.rail{position:relative;min-width:0;align-self:stretch}
+/* SVG absolutely positioned so its 1000-unit viewBox doesn't inflate the grid
+   row height. It fills the .rail cell, which stretches to the band (real content). */
+.rail svg{position:absolute;inset:0;display:block;width:100%;height:100%;overflow:visible}
+.rail-line{opacity:.5;filter:drop-shadow(0 0 3px currentColor);animation:railfade 3s ease-in-out infinite;animation-delay:var(--d,0s)}
+@keyframes railfade{0%,100%{opacity:.32}50%{opacity:.6}}
+.rail-dot{filter:drop-shadow(0 0 5px currentColor)}
+/* FAN-OUT / CONVERGE captions beneath each rail */
+#rail-fan::after,#rail-merge::after{position:absolute;left:0;right:0;bottom:-24px;text-align:center;
+  font-family:var(--mono);font-size:8px;letter-spacing:.24em;color:var(--muted-2)}
+#rail-fan::after{content:"FAN-OUT"}
+#rail-merge::after{content:"CONVERGE"}
+
+/* ── parallel scene band ── */
+.band-wrap{display:flex;flex-direction:column;min-width:0}
+.band-lbl{text-align:center;margin-bottom:12px}
+.band-lbl #band-ct{display:block;font-family:var(--mono);font-size:10.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--teal)}
+.band-lbl .band-sub{display:block;margin-top:4px;font-family:var(--mono);font-size:8.5px;letter-spacing:.06em;color:var(--muted-2)}
+.band{border:1px dashed rgba(79,209,197,.18);border-radius:14px;background:rgba(79,209,197,.018);padding:14px 26px 16px;display:flex;flex-direction:column;gap:2px}
+.band-hint{font-family:var(--mono);font-size:10px;color:var(--muted-2);text-align:center;padding:28px 0}
+
+/* column header (CODE · VOICE · VALIDATE) — 3 even cols, aligned to pip centers */
+.lane-head{display:grid;grid-template-columns:repeat(3,1fr);padding:0 0 4px}
+.lane-head .hcol{text-align:center;font-family:var(--mono);font-size:8.5px;letter-spacing:.18em;color:var(--muted-2)}
+
+/* one lane per scene: SC label on top, then 3 node-discs joined by links */
+.lane{position:relative;padding:6px 0 4px;animation:rise .45s cubic-bezier(.16,1,.3,1) both;animation-delay:calc(var(--i,0)*55ms)}
+.lane .sc{display:block;font-family:var(--mono);font-size:9px;letter-spacing:.1em;color:var(--muted);margin:0 0 3px;text-align:left;padding-left:9%}
+.lane.done .sc{color:var(--teal)}
+.lane.fail .sc{color:var(--rose)}
+.lane .pips{position:relative;display:grid;grid-template-columns:repeat(3,1fr);align-items:center;justify-items:center}
+/* baseline connector spans col-1 center (≈16.6%) to col-3 center (≈83.3%);
+   the opaque discs sit on top (z-index 1) so it reads as links between nodes. */
+.lane .pips::before{content:"";position:absolute;top:50%;left:16.66%;right:16.66%;height:1.5px;
+  background:var(--line);transform:translateY(-50%);z-index:0;transition:.35s}
+.lane.done .pips::before,.lane.live .pips::before{background:linear-gradient(90deg,rgba(79,209,197,.45),rgba(79,209,197,.18))}
+/* the double-ring node disc */
+.lane .pip{position:relative;width:42px;height:42px;border-radius:50%;
+  background:var(--ink-2);border:1.5px solid var(--line);display:flex;align-items:center;justify-content:center;transition:.35s;z-index:1;
+  box-shadow:inset 0 0 0 4px var(--ink)}
+.lane .pip svg{width:18px;height:18px;stroke:var(--muted-2);transition:.35s}
+.lane .pip.done{border-color:var(--teal);box-shadow:inset 0 0 0 4px var(--ink),0 0 12px rgba(79,209,197,.26)}
+.lane .pip.done svg{stroke:var(--teal)}
+.lane .pip.cur{border-color:var(--signal);box-shadow:inset 0 0 0 4px var(--ink),0 0 0 3px rgba(216,255,62,.10),0 0 16px rgba(216,255,62,.42);animation:throb 1.5s infinite}
+.lane .pip.cur svg{stroke:var(--signal)}
+.lane .pip.fail{border-color:var(--rose);box-shadow:inset 0 0 0 4px var(--ink),0 0 14px rgba(255,107,107,.32)}
+.lane .pip.fail svg{stroke:var(--rose)}
+.lane.fail .lstate{color:var(--rose)}
 
 .dev-readout{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;margin-top:46px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
 .dev-readout .cell{background:var(--ink-2);padding:20px 22px}
@@ -175,16 +240,18 @@ button{font-family:inherit}
 .dev-readout .v{font-family:var(--serif);font-size:30px;font-weight:500}
 .dev-readout .v.lime{color:var(--signal);font-style:italic}
 .dev-readout .v small{font-size:14px;color:var(--muted);font-family:var(--mono);font-style:normal}
-.scenebar{display:flex;gap:4px;margin-top:10px}
-.scenebar i{flex:1;height:8px;border-radius:2px;background:var(--line);transition:.4s}
-.scenebar i.done{background:var(--teal)}
-.scenebar i.live{background:var(--signal)}
-.scenebar i.fail{background:var(--rose)}
 
 /* ===== error banner ===== */
 .errbar{margin:24px 30px 0;border:1px solid rgba(255,107,107,.4);background:rgba(255,107,107,.07);border-radius:12px;padding:16px 20px}
+.errbar-head{display:flex;align-items:center;justify-content:space-between;gap:14px}
 .errbar b{font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--rose)}
 .errbar pre{margin-top:8px;font-family:var(--mono);font-size:12px;color:var(--muted);white-space:pre-wrap;word-break:break-word;max-height:160px;overflow:auto}
+.retry-btn{font-family:var(--mono);font-size:11px;letter-spacing:.04em;color:#0a0b0e;background:var(--signal);border:none;border-radius:7px;padding:8px 14px;cursor:pointer;white-space:nowrap;transition:.16s;font-weight:600}
+.retry-btn:hover{transform:translateY(-1px);box-shadow:0 8px 20px rgba(216,255,62,.25)}
+.retry-btn:disabled{opacity:.55;cursor:default;transform:none;box-shadow:none}
+.cs-retry{position:absolute;bottom:12px;right:14px;font-family:var(--mono);font-size:9.5px;letter-spacing:.04em;color:var(--signal);background:rgba(216,255,62,.1);border:1px solid rgba(216,255,62,.35);border-radius:5px;padding:4px 9px;cursor:pointer;transition:.15s}
+.cs-retry:hover{background:var(--signal);color:#0a0b0e}
+.cs-retry:disabled{opacity:.55;cursor:default}
 
 /* ===== activity log ===== */
 .log{margin:42px 30px 0;border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--ink-2)}
@@ -212,6 +279,12 @@ button{font-family:inherit}
 .slate .go{background:var(--signal);color:#0a0b0e;border:none;border-radius:10px;padding:13px 22px;font-family:var(--sans);font-weight:600;font-size:14px;cursor:pointer;white-space:nowrap;transition:.16s;display:flex;align-items:center;gap:8px}
 .slate .go:hover{transform:translateY(-1px);box-shadow:0 10px 26px rgba(216,255,62,.28)}
 .slate .go:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none}
+/* render-engine segmented toggle (per-job: Hybrid / Manim / HyperFrames) */
+.rm-toggle{display:flex;background:var(--ink-3);border:1px solid var(--line);border-radius:9px;padding:3px;gap:2px;flex:0 0 auto}
+.rm-opt{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;background:none;border:none;color:var(--muted);padding:8px 13px;border-radius:7px;cursor:pointer;transition:.16s;white-space:nowrap}
+.rm-opt:hover{color:var(--paper)}
+.rm-opt.on{background:var(--teal);color:#0a0b0e;font-weight:600}
+@media(max-width:820px){.rm-toggle{order:3;width:100%;justify-content:center}}
 
 /* ===== contact sheet drawer ===== */
 .scrim{position:fixed;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);z-index:60;opacity:0;pointer-events:none;transition:.25s}
@@ -262,9 +335,10 @@ button{font-family:inherit}
 /* loading + error states */
 .setup-load{display:flex;flex-direction:column;gap:12px;padding:8px 0 22px}
 .setup-load p{font-family:var(--mono);font-size:12px;color:var(--muted);letter-spacing:.04em}
-.sk{border-radius:8px;background:linear-gradient(100deg,var(--ink) 30%,var(--ink-3) 50%,var(--ink) 70%);background-size:200% 100%;animation:shim 1.4s ease-in-out infinite}
+.sk{position:relative;overflow:hidden;border-radius:8px;background:var(--ink-3)}
+.sk::after{content:"";position:absolute;inset:0;background:linear-gradient(100deg,transparent 25%,rgba(236,231,218,.14) 50%,transparent 75%);transform:translateX(-100%);animation:shim 1.3s ease-in-out infinite}
 .sk.l{height:14px}.sk.w60{width:60%}.sk.w85{width:85%}.sk.c{height:58px;margin-top:6px}
-@keyframes shim{to{background-position:-200% 0}}
+@keyframes shim{to{transform:translateX(100%)}}
 .setup-err{display:flex;flex-direction:column;gap:14px;padding:14px 0 20px}
 .setup-err p{font-family:var(--serif);font-style:italic;font-size:16px;color:var(--muted)}
 .setup-err .row{display:flex;gap:10px;justify-content:flex-end}
@@ -292,11 +366,14 @@ button{font-family:inherit}
 .q-custom input:focus{border-color:var(--signal)}
 
 .setup-foot{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-top:28px;padding-top:20px;border-top:1px solid var(--line-soft)}
-.setup-foot .skip{background:none;border:none;color:var(--muted);font-family:var(--mono);font-size:12px;letter-spacing:.05em;cursor:pointer;transition:.14s}
-.setup-foot .skip:hover{color:var(--paper)}
-.setup-foot .roll{background:var(--signal);color:#0a0b0e;border:none;border-radius:11px;padding:14px 26px;font-family:var(--sans);font-weight:600;font-size:14.5px;cursor:pointer;display:flex;align-items:center;gap:9px;transition:.16s}
-.setup-foot .roll:hover{transform:translateY(-1px);box-shadow:0 12px 30px rgba(216,255,62,.3)}
-.setup-foot .roll:disabled{opacity:.4;cursor:not-allowed;transform:none;box-shadow:none}
+.setup .skip{background:none;border:none;color:var(--muted);font-family:var(--mono);font-size:12px;letter-spacing:.05em;cursor:pointer;transition:.14s}
+.setup .skip:hover{color:var(--paper)}
+.setup .roll{background:var(--signal);color:#0a0b0e;border:none;border-radius:11px;padding:14px 26px;font-family:var(--sans);font-weight:600;font-size:14.5px;cursor:pointer;display:flex;align-items:center;gap:9px;transition:.16s}
+.setup .roll:hover{transform:translateY(-1px);box-shadow:0 12px 30px rgba(216,255,62,.3)}
+.setup .roll:disabled{opacity:.4;cursor:not-allowed;transform:none;box-shadow:none}
+/* error-state "Try again" reads as a bordered secondary button, not bare ghost text */
+.setup-err .skip{border:1px solid var(--line);border-radius:11px;padding:13px 20px;color:var(--paper)}
+.setup-err .skip:hover{border-color:var(--signal);color:var(--signal)}
 
 /* ===== LANDING / opening stage ===== */
 .home{
@@ -353,7 +430,10 @@ button{font-family:inherit}
   .opt{flex:1 1 calc(50% - 4px)}
   .proj-head{flex-direction:column;align-items:flex-start;gap:14px}
   .proj-head .facts{text-align:left}
-  .dev-stages{overflow-x:auto;padding-bottom:8px}.dev-node{min-width:96px}
+  .fanout{grid-template-columns:1fr;gap:18px}
+  .cap-col{flex-direction:row;justify-content:center;gap:30px}
+  .cap-col.converge{justify-content:center}
+  .rail{display:none}
   .dev-readout{grid-template-columns:repeat(2,1fr)}
   .slate .clap{display:none}
 }
@@ -390,7 +470,7 @@ button{font-family:inherit}
 .log{animation:rise .55s .2s cubic-bezier(.16,1,.3,1) both}
 
 /* the lab */
-.dev-node{animation:rise .5s cubic-bezier(.16,1,.3,1) both;animation-delay:calc(var(--i,0)*60ms)}
-.dev-node .orb{animation:orbpop .5s cubic-bezier(.34,1.3,.5,1) both;animation-delay:calc(.1s + var(--i,0)*60ms)}
+.fanout{animation:rise .5s cubic-bezier(.16,1,.3,1) both}
+.cap-node .orb{animation:orbpop .5s cubic-bezier(.34,1.3,.5,1) both;animation-delay:.1s}
 .dev-readout{animation:rise .55s .25s cubic-bezier(.16,1,.3,1) both}
 .empty-stage{animation:rise .5s cubic-bezier(.16,1,.3,1) both}

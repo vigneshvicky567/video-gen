@@ -42,11 +42,14 @@
   let feedLines = [];                 // accumulated live log lines for the lab
   let mountKey = null;                // what shell is currently rendered
   let lastJobsSig = "", lastHealthSig = "";
-  let filmMounted = false;            // cut: video src set once
   let setupOpen = false;
 
   /* setup/analyze working state */
   let analyzer = null, setupAns = {}, setupPrompt = "", setupBusy = false;
+
+  /* render engine for the NEXT job: "hybrid" (per-scene auto), "manim", "hyperframes" */
+  let renderMode = "hybrid";
+  const RENDER_MODES = [["hybrid", "Hybrid"], ["manim", "Manim"], ["hyperframes", "HyperFrames"]];
 
   /* ── utils ── */
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -154,10 +157,17 @@
     </div>`;
   }
 
+  function renderModeToggle() {
+    const btns = RENDER_MODES.map(([v, label]) =>
+      `<button class="rm-opt ${renderMode === v ? "on" : ""}" data-rm="${v}">${label}</button>`
+    ).join("");
+    return `<div class="rm-toggle" id="rm-toggle" title="Render engine for the next film">${btns}</div>`;
+  }
   function slate() {
     return `<div class="slate">
       <span class="clap">Roll camera —</span>
       <input id="slate-input" maxlength="300" placeholder="Describe an idea to film… e.g. how a hash map handles collisions"/>
+      ${renderModeToggle()}
       <button class="go" id="slate-go">Make it <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0a0b0e" stroke-width="2.4"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
     </div>`;
   }
@@ -168,10 +178,12 @@
       const kind = f.status === "completed" ? "ready" : f.status === "failed" ? "fail" : "render";
       const badge = f.status === "completed" ? "Ready" : f.status === "failed" ? "Failed" : "Rendering";
       const meta = `${chipText(f.status)} · ${timeAgo(parseUtc(f.created_at))}`;
+      const retry = f.status === "failed"
+        ? `<button class="cs-retry" data-retry="${f.job_id}" title="Resume this job">↻ Retry</button>` : "";
       return `<div class="cs ${f.job_id === selectedId ? "on" : ""}" data-id="${f.job_id}">
         <div class="ti">${esc(f.topic)}</div>
         <div class="ti-meta">${esc(meta)}</div>
-        <span class="bd bd-${kind}">${badge}</span>
+        <span class="bd bd-${kind}">${badge}</span>${retry}
       </div>`;
     }).join("");
   }
@@ -277,16 +289,7 @@
             <b>≈ ${fmtDur(runtime)}</b> runtime<br><b>${c.scenes}</b> scenes · 1080p<br><b>${c.retries}</b> retries auto-healed
           </div>
         </div>
-        <div class="screen" id="screen">
-          <video class="screenvid" id="film-video" playsinline preload="metadata"></video>
-          <div class="grain"></div>
-          ${cap ? `<div class="cap"><p>“${esc(cap)}”</p></div>` : ""}
-          <button class="bigplay" id="bigplay"><svg width="26" height="28" viewBox="0 0 22 24" fill="#ECE7DA"><path d="M2 2L20 12L2 22V2Z"/></svg></button>
-          <div class="scrub">
-            <span class="tm" id="film-tm">0:00 / ${fmtDur(runtime)}</span>
-            <div class="track"><i id="film-prog"></i></div>
-          </div>
-        </div>
+        <div class="screen" id="screen">${filmPlayerHtml(`/video/${selectedId}`)}</div>
         <div class="canister">
           <a class="dl" id="film-dl" href="/video/${selectedId}" download><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0a0b0e" stroke-width="2.2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>Download film</a>
           <div class="fmt"><b>1080p</b> MP4 · <b>captions</b> baked in · <b>Kokoro</b> voice</div>
@@ -309,6 +312,126 @@
   }
 
   const sprockets = (n) => `<div class="perf top">${"<b></b>".repeat(n)}</div><div class="perf bottom">${"<b></b>".repeat(n)}</div>`;
+
+  /* video.js v10 default skin (web components, self-initializing via video-ui.js) */
+  function filmPlayerHtml(src) {
+    return `<video-player class="screenvid">
+      <media-container class="media-default-skin media-default-skin--video">
+        <video src="${src}" playsinline></video>
+
+        <media-buffering-indicator class="media-buffering-indicator">
+          <div class="media-surface"><media-icon name="spinner" class="media-icon"></media-icon></div>
+        </media-buffering-indicator>
+
+        <media-error-dialog class="media-error">
+          <div class="media-error__dialog media-surface">
+            <div class="media-error__content">
+              <media-alert-dialog-title class="media-error__title">Couldn't play this film.</media-alert-dialog-title>
+              <media-alert-dialog-description class="media-error__description"></media-alert-dialog-description>
+            </div>
+            <div class="media-error__actions">
+              <media-alert-dialog-close class="media-button media-button--primary">OK</media-alert-dialog-close>
+            </div>
+          </div>
+        </media-error-dialog>
+
+        <media-controls class="media-surface media-controls">
+          <media-tooltip-group>
+            <div class="media-button-group">
+              <media-play-button commandfor="play-tooltip" class="media-button media-button--subtle media-button--icon media-button--play">
+                <media-icon name="restart" class="media-icon media-icon--restart"></media-icon>
+                <media-icon name="play" class="media-icon media-icon--play"></media-icon>
+                <media-icon name="pause" class="media-icon media-icon--pause"></media-icon>
+              </media-play-button>
+              <media-tooltip id="play-tooltip" side="top" class="media-surface media-tooltip"></media-tooltip>
+
+              <media-seek-button commandfor="seek-backward-tooltip" seconds="-10" class="media-button media-button--subtle media-button--icon media-button--seek">
+                <span class="media-icon__container"><media-icon name="seek" class="media-icon media-icon--flipped"></media-icon><span class="media-icon__label">10</span></span>
+              </media-seek-button>
+              <media-tooltip id="seek-backward-tooltip" side="top" class="media-surface media-tooltip"></media-tooltip>
+
+              <media-seek-button commandfor="seek-forward-tooltip" seconds="10" class="media-button media-button--subtle media-button--icon media-button--seek">
+                <span class="media-icon__container"><media-icon name="seek" class="media-icon"></media-icon><span class="media-icon__label">10</span></span>
+              </media-seek-button>
+              <media-tooltip id="seek-forward-tooltip" side="top" class="media-surface media-tooltip"></media-tooltip>
+            </div>
+
+            <div class="media-time-controls">
+              <media-time type="current" class="media-time"></media-time>
+              <media-time-slider class="media-slider">
+                <media-slider-track class="media-slider__track">
+                  <media-slider-fill class="media-slider__fill"></media-slider-fill>
+                  <media-slider-buffer class="media-slider__buffer"></media-slider-buffer>
+                </media-slider-track>
+                <media-slider-thumb class="media-slider__thumb"></media-slider-thumb>
+              </media-time-slider>
+              <media-time type="duration" class="media-time"></media-time>
+            </div>
+
+            <div class="media-button-group">
+              <media-playback-rate-menu-trigger commandfor="playback-rate-menu" class="media-button media-button--subtle media-button--icon media-button--playback-rate"></media-playback-rate-menu-trigger>
+              <media-playback-rate-menu id="playback-rate-menu" side="top" align="center" class="media-surface media-popover media-menu media-menu--playback-rate">
+                <media-playback-rate-options class="media-menu__group">
+                  <template>
+                    <media-menu-radio-item class="media-menu__item">
+                      <span data-part="label"></span>
+                      <media-menu-item-indicator force-mount class="media-menu__indicator"><media-icon name="check" class="media-icon"></media-icon></media-menu-item-indicator>
+                    </media-menu-radio-item>
+                  </template>
+                </media-playback-rate-options>
+              </media-playback-rate-menu>
+
+              <media-mute-button commandfor="video-volume-popover" class="media-button media-button--subtle media-button--icon media-button--mute">
+                <media-icon name="volume-off" class="media-icon media-icon--volume-off"></media-icon>
+                <media-icon name="volume-low" class="media-icon media-icon--volume-low"></media-icon>
+                <media-icon name="volume-high" class="media-icon media-icon--volume-high"></media-icon>
+              </media-mute-button>
+              <media-popover id="video-volume-popover" open-on-hover delay="200" close-delay="100" side="top" class="media-surface media-popover media-popover--volume">
+                <media-volume-slider class="media-slider" orientation="vertical" thumb-alignment="edge">
+                  <media-slider-track class="media-slider__track"><media-slider-fill class="media-slider__fill"></media-slider-fill></media-slider-track>
+                  <media-slider-thumb class="media-slider__thumb media-slider__thumb--persistent"></media-slider-thumb>
+                </media-volume-slider>
+              </media-popover>
+
+              <media-captions-button commandfor="captions-tooltip" class="media-button media-button--subtle media-button--icon media-button--captions">
+                <media-icon name="captions-off" class="media-icon media-icon--captions-off"></media-icon>
+                <media-icon name="captions-on" class="media-icon media-icon--captions-on"></media-icon>
+              </media-captions-button>
+              <media-tooltip id="captions-tooltip" side="top" class="media-surface media-tooltip"></media-tooltip>
+
+              <media-pip-button commandfor="pip-tooltip" class="media-button media-button--subtle media-button--icon media-button--pip">
+                <media-icon name="pip-enter" class="media-icon media-icon--pip-enter"></media-icon>
+                <media-icon name="pip-exit" class="media-icon media-icon--pip-exit"></media-icon>
+              </media-pip-button>
+              <media-tooltip id="pip-tooltip" side="top" class="media-surface media-tooltip"></media-tooltip>
+
+              <media-fullscreen-button commandfor="fullscreen-tooltip" class="media-button media-button--subtle media-button--icon media-button--fullscreen">
+                <media-icon name="fullscreen-enter" class="media-icon media-icon--fullscreen-enter"></media-icon>
+                <media-icon name="fullscreen-exit" class="media-icon media-icon--fullscreen-exit"></media-icon>
+              </media-fullscreen-button>
+              <media-tooltip id="fullscreen-tooltip" side="top" class="media-surface media-tooltip"></media-tooltip>
+            </div>
+          </media-tooltip-group>
+        </media-controls>
+
+        <div class="media-overlay"></div>
+
+        <media-hotkey keys="Space" action="togglePaused"></media-hotkey>
+        <media-hotkey keys="k" action="togglePaused"></media-hotkey>
+        <media-hotkey keys="m" action="toggleMuted"></media-hotkey>
+        <media-hotkey keys="f" action="toggleFullscreen"></media-hotkey>
+        <media-hotkey keys="c" action="toggleSubtitles"></media-hotkey>
+        <media-hotkey keys="ArrowRight" action="seekStep" value="5"></media-hotkey>
+        <media-hotkey keys="ArrowLeft" action="seekStep" value="-5"></media-hotkey>
+
+        <media-gesture type="tap" action="togglePaused" pointer="mouse" region="center"></media-gesture>
+        <media-gesture type="tap" action="toggleControls" pointer="touch"></media-gesture>
+        <media-gesture type="doubletap" action="seekStep" value="-10" region="left"></media-gesture>
+        <media-gesture type="doubletap" action="toggleFullscreen" region="center"></media-gesture>
+        <media-gesture type="doubletap" action="seekStep" value="10" region="right"></media-gesture>
+      </media-container>
+    </video-player>`;
+  }
 
   function frameHtml(s, st, i) {
     const sid = String(s.scene_id);
@@ -341,6 +464,143 @@
     ).join("");
   }
 
+  /* ════════ THE LAB — fan-out helpers ════════ */
+  // a single-track endpoint node (Script / Assemble / Film)
+  function capNode(id, ic, nm, sub) {
+    return `<div class="cap-node" id="cap-${id}">
+      <div class="orb"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${ic}</svg></div>
+      <div class="nm">${nm}</div><div class="sub">${sub}</div><div class="st" id="cap-${id}-st"></div>
+    </div>`;
+  }
+  // SVG connector rail that fans from a single point to N lanes (or converges back).
+  // viewBox stretches to the rail cell (preserveAspectRatio=none) so it tracks the band height.
+  // Smooth bezier rails: a single point (the cap) splays to N lanes. Each path
+  // also carries a slow traveling dot (the signal). Gradient flows lime→teal on
+  // fan-out, teal→amber on converge, matching the img.
+  // ys: array of lane-center Y fractions [0..1] of the rail box height. When
+  // omitted, fall back to even spacing (used before lanes are measured).
+  function railSvg(n, dir, ys) {
+    if (!n) return "";
+    const Hn = 1000, mid = Hn / 2, paths = [], dots = [];
+    const grad = dir === "fan" ? "url(#gFan)" : "url(#gMerge)";
+    const dotCol = dir === "fan" ? "var(--teal)" : "var(--amber)";
+    for (let i = 0; i < n; i++) {
+      const frac = ys && ys[i] != null ? ys[i] : (i + 0.5) / n;
+      const y = frac * Hn;
+      // long, gentle control points → the sweeping splay in the img
+      const d = dir === "fan"
+        ? `M2,${mid} C46,${mid} 54,${y} 98,${y}`
+        : `M2,${y} C46,${y} 54,${mid} 98,${mid}`;
+      const id = `${dir}-${i}`;
+      paths.push(`<path id="rp-${id}" d="${d}" fill="none" stroke="${grad}" stroke-width="2" stroke-linecap="round" class="rail-line" style="--d:${(i * 0.22).toFixed(2)}s" vector-effect="non-scaling-stroke"/>`);
+      dots.push(`<circle r="3.4" fill="${dotCol}" class="rail-dot">
+        <animateMotion dur="${(2.4 + (i % 3) * 0.4).toFixed(1)}s" repeatCount="indefinite" begin="${(i * 0.18).toFixed(2)}s"
+          keyPoints="${dir === "fan" ? "0;1" : "0;1"}" keyTimes="0;1" calcMode="spline" keySplines="0.4 0 0.2 1">
+          <mpath href="#rp-${id}"/></animateMotion></circle>`);
+    }
+    return `<svg viewBox="0 0 100 ${Hn}" preserveAspectRatio="none" width="100%" height="100%">
+      <defs>
+        <linearGradient id="gFan" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="var(--signal)"/><stop offset="1" stop-color="var(--teal)"/></linearGradient>
+        <linearGradient id="gMerge" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="var(--teal)"/><stop offset="1" stop-color="var(--amber)"/></linearGradient>
+      </defs>${paths.join("")}${dots.join("")}</svg>`;
+  }
+  // per-scene pip states across [code, validate, voice]
+  function lanePips(sid, st, running) {
+    const has = (o) => o && (sid in o);
+    // map per stage key (lane order = code · voice · validate)
+    const map = { code: has(st.code_paths), voice: has(st.audio_paths), validate: has(st.render_paths) };
+    const done = LANE_STAGES.map((g) => map[g.key]);
+    const err = has(st.error_logs) && st.status !== "completed";
+    const firstOpen = done.indexOf(false);
+    const states = done.map((d, j) => {
+      if (d) return "done";
+      if (err && j === firstOpen) return "fail";
+      if (running && !err && j === firstOpen) return "cur";
+      return "wait";
+    });
+    let word = SCENE_LABEL[sceneState(String(sid), st)] || "queued";
+    if (map.code && !map.voice && running && !err) word = "narrating";
+    if (map.code && map.voice && map.validate) word = "developed";
+    return { states, word, err, allDone: done.every(Boolean) };
+  }
+  // The three per-scene stages, in true pipeline order: generate code →
+  // render/validate → narrate. Each carries the matching STAGES icon so a lane
+  // pip reads as a node (img2), not a bar (img1). Column headers use these labels.
+  const LANE_STAGES = [
+    { key: "code",     label: "CODE",     ic: STAGES[1].ic },
+    { key: "voice",    label: "VOICE",    ic: STAGES[3].ic },
+    { key: "validate", label: "VALIDATE", ic: STAGES[2].ic },
+  ];
+  function pipNode(g) {
+    return `<span class="pip ${g.key}">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${g.ic}</svg>
+    </span>`;
+  }
+  // Bundle scenes into at most MAX_LANES groups so the diagram stays compact for
+  // long videos (a 30-scene job shows 4 group lanes, not 30 rows). Each group
+  // owns a contiguous run of scenes; its disc lights only when ALL its scenes
+  // finish that stage. ≤4 scenes => one scene per lane (no bundling).
+  const MAX_LANES = 4;
+  function sceneGroups(scenes) {
+    const n = scenes.length;
+    const groups = Math.min(MAX_LANES, n);
+    const per = Math.ceil(n / groups);
+    const out = [];
+    for (let g = 0; g < groups; g++) {
+      const slice = scenes.slice(g * per, (g + 1) * per);
+      if (slice.length) out.push(slice);
+    }
+    return out;
+  }
+  // (re)build the scene band + connector rails once the scene count is known.
+  // One lane per GROUP: CODE·VOICE·VALIDATE icon discs, label shows the scene span.
+  function buildBand(scenes) {
+    const band = document.getElementById("scene-band");
+    if (!band) return;
+    const n = scenes.length;
+    if (band.dataset.n !== String(n)) {
+      band.dataset.n = String(n);
+      const groups = sceneGroups(scenes);
+      const header = `<div class="lane-head" aria-hidden="true">
+        ${LANE_STAGES.map((g) => `<span class="hcol">${g.label}</span>`).join("")}
+      </div>`;
+      const lanes = groups.map((slice, i) => {
+        const pips = LANE_STAGES.map(pipNode).join("");
+        const first = slice[0].scene_id ?? (i + 1);
+        const last = slice[slice.length - 1].scene_id ?? (i + slice.length);
+        const label = slice.length === 1 ? `SC ${String(first).padStart(2, "0")}`
+                                         : `SC ${first}–${last}`;
+        return `<div class="lane" id="lane-${i}" style="--i:${i}">
+          <span class="sc">${esc(label)}</span>
+          <span class="pips">${pips}</span>
+        </div>`;
+      }).join("");
+      band.innerHTML = header + lanes;
+      drawRails(groups.length);
+    }
+  }
+  // Draw fan/merge rails so each line lands on the ACTUAL vertical centre of its
+  // lane. The rail box and the band have different heights (band has a label +
+  // header above the lanes), so even spacing misaligns — measure instead.
+  function drawRails(n) {
+    const rf = document.getElementById("rail-fan"), rm = document.getElementById("rail-merge");
+    const band = document.getElementById("scene-band");
+    if (!rf || !rm || !band) return;
+    const railBox = rf.getBoundingClientRect();
+    let ys = null;
+    if (railBox.height > 0) {
+      const lanes = [...band.querySelectorAll(".lane")];
+      if (lanes.length === n) {
+        ys = lanes.map((el) => {
+          const r = el.getBoundingClientRect();
+          return (r.top + r.height / 2 - railBox.top) / railBox.height;  // fraction of rail height
+        });
+      }
+    }
+    rf.innerHTML = railSvg(n, "fan", ys);
+    rm.innerHTML = railSvg(n, "merge", ys);
+  }
+
   /* ════════ THE LAB (running / failed) ════════ */
   function labShell() {
     if (!jobState) {
@@ -360,31 +620,45 @@
           <h1>${esc(st.topic || "Untitled")}</h1>
         </div>
         <div class="facts">
+          ${RUNNING.has(st.status) ? `<button class="stop-btn" id="stop-btn">■ Stop</button><br>` : ""}
           job <b class="jobid" id="jobid">${esc((st.job_id || "").slice(0, 8))}…</b><br>${esc(created)}<br>six stages, in order
         </div>
       </div></div>
 
       <div class="devtrack">
         <div class="strip-label" style="padding-left:0">Developing track <span class="ct" id="track-ct">·</span></div>
-        <div class="dev-stages" id="dev-stages">
-          <div class="conn"><i id="conn-fill"></i></div>
-          ${STAGES.map((s, i) => `<div class="dev-node" id="node-${i}" style="--i:${i}">
-            <div class="orb"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${s.ic}</svg></div>
-            <div class="nm">${s.nm}</div><div class="st" id="node-st-${i}"></div>
-          </div>`).join("")}
+
+        <!-- fan-out: Script splits into N parallel scene agents, then converges into Assemble → Film -->
+        <div class="fanout" id="fanout">
+          <div class="cap-col">
+            ${capNode("script", STAGES[0].ic, "Script", "splits prompt → N scenes")}
+          </div>
+          <div class="rail" id="rail-fan" aria-hidden="true"></div>
+          <div class="band-wrap">
+            <div class="band-lbl"><span id="band-ct">Parallel scene agents</span>
+              <span class="band-sub">one independent agent per scene · stages 2–4</span></div>
+            <div class="band" id="scene-band"><div class="band-hint">waiting for scene breakdown…</div></div>
+          </div>
+          <div class="rail" id="rail-merge" aria-hidden="true"></div>
+          <div class="cap-col converge">
+            ${capNode("assemble", STAGES[4].ic, "Assemble", "stitch + caption")}
+            ${capNode("film", STAGES[5].ic, "Film", "signed URL")}
+          </div>
         </div>
 
         <div class="dev-readout">
           <div class="cell"><div class="k">Time remaining</div><div class="v lime" id="ro-eta">—</div></div>
           <div class="cell"><div class="k">Elapsed</div><div class="v" id="ro-elapsed">0:00</div></div>
-          <div class="cell"><div class="k">Scenes</div><div class="v" id="ro-scenes">0<small>/0</small></div>
-            <div class="scenebar" id="scenebar"></div></div>
+          <div class="cell"><div class="k">Scenes</div><div class="v" id="ro-scenes">0<small>/0</small></div></div>
           <div class="cell"><div class="k">Auto-healed</div><div class="v" id="ro-retries">0<small> retries</small></div></div>
         </div>
       </div>
 
       <div class="errbar" id="errbar" ${failed && st.overall_error ? "" : "hidden"}>
-        <b>Pipeline fault</b><pre id="err-text">${esc(st.overall_error || "")}</pre>
+        <div class="errbar-head"><b>Pipeline fault</b>
+          <button class="retry-btn" id="retry-btn">↻ Retry — resume from where it stopped</button>
+        </div>
+        <pre id="err-text">${esc(st.overall_error || "")}</pre>
       </div>
 
       <div class="log">
@@ -400,23 +674,57 @@
     const failed = st.status === "failed";
     const cur = failed ? failStageIdx(st) : curStageIdx(st.status);
 
-    // stages
-    STAGES.forEach((s, i) => {
-      const node = document.getElementById(`node-${i}`);
-      if (!node) return;
-      let cls = "dev-node", label = "";
-      if (st.status === "completed" || i < cur) { cls += " done"; label = "done"; }
-      else if (failed && i === cur) { cls += " fail"; label = "fault"; }
-      else if (i === cur) { cls += " cur"; label = "in progress"; }
-      else { label = "waiting"; }
-      node.className = cls;
-      const stEl = document.getElementById(`node-st-${i}`);
-      if (stEl) stEl.textContent = label;
-    });
-    const cf = document.getElementById("conn-fill");
-    if (cf) cf.style.width = (st.status === "completed" ? 100 : (cur / (STAGES.length - 1)) * 100) + "%";
+    // ── fan-out: endpoint caps + parallel scene band ──
+    const running = RUNNING.has(st.status);
+    const scenes = st.script?.scenes || [];
+    const setCap = (id, state, word) => {
+      const el = document.getElementById(`cap-${id}`);
+      if (el) el.className = "cap-node" + (state ? " " + state : "");
+      setText(`cap-${id}-st`, word);
+    };
+    // Script: done once the screenplay exists, else summoning
+    setCap("script", st.script ? "done" : "cur", st.script ? `${scenes.length} scenes` : "writing");
+    // Assemble: barrier — runs at assembly, done when completed, faults if failed there
+    const asmState = st.status === "completed" ? "done"
+      : st.status === "assembly" ? "cur"
+      : (failed && cur >= 4) ? "fail" : "wait";
+    setCap("assemble", asmState, st.status === "assembly" ? "stitching" : asmState === "done" ? "stitched" : asmState === "fail" ? "fault" : "waiting");
+    setCap("film", st.status === "completed" ? "done" : "wait", st.status === "completed" ? "ready" : "—");
+
+    // build group lanes once scenes are known, then patch each group's discs:
+    // a stage is "done" only when EVERY scene in the group finished it.
+    if (scenes.length) {
+      buildBand(scenes);
+      const groups = sceneGroups(scenes);
+      drawRails(groups.length);  // re-measure: lanes are laid out now, align lines to them
+      let validated = 0;  // count of fully-developed scenes (all 3 stages)
+      groups.forEach((slice, i) => {
+        const lane = document.getElementById(`lane-${i}`);
+        if (!lane) return;
+        const members = slice.map((sc, k) => lanePips(String(sc.scene_id ?? k + 1), st, running));
+        validated += members.filter((m) => m.allDone).length;
+        // Aggregate each stage across the group: all done -> done; any fail -> fail;
+        // any in-progress -> cur; else wait.
+        LANE_STAGES.forEach((g, j) => {
+          const states = members.map((m) => m.states[j]);
+          const agg = states.every((s) => s === "done") ? "done"
+            : states.includes("fail") ? "fail"
+            : states.includes("cur") ? "cur" : "wait";
+          const pip = lane.querySelector(`.pip.${g.key}`);
+          if (pip) pip.className = `pip ${g.key} ${agg}`;
+        });
+        const allDone = members.every((m) => m.allDone);
+        const anyErr = members.some((m) => m.err);
+        lane.className = "lane" + (allDone ? " done" : anyErr ? " fail" : running ? " live" : "");
+      });
+      const bs = document.querySelector(".band-sub");
+      const lbl = scenes.length > MAX_LANES
+        ? `${validated}/${scenes.length} developed · ${groups.length} agent groups`
+        : `${validated}/${scenes.length} developed · one agent per scene`;
+      if (bs) bs.textContent = lbl;
+    }
     const tct = document.getElementById("track-ct");
-    if (tct) tct.textContent = failed ? `· stopped at ${STAGES[cur].nm.toLowerCase()}` : `· stage ${Math.min(cur + 1, 6)} of 6`;
+    if (tct) tct.textContent = failed ? `· stopped at ${STAGES[cur].nm.toLowerCase()}` : st.status === "completed" ? "· complete" : `· stage ${Math.min(cur + 1, 6)} of 6`;
 
     // readout
     const now = Date.now(), end = completedMs || now;
@@ -435,18 +743,6 @@
       else { const raw = elapsed * (1 - f) / f; etaSmooth = etaSmooth == null ? raw : etaSmooth * 0.75 + raw * 0.25; etaText = `~${fmtDur(Math.min(etaSmooth, 99 * 60))}`; }
     }
     setText("ro-eta", etaText);
-
-    // scenebar
-    const bar = document.getElementById("scenebar");
-    if (bar) {
-      const scenes = st.script?.scenes || [];
-      if (bar.children.length !== scenes.length) { bar.innerHTML = ""; scenes.forEach(() => bar.appendChild(document.createElement("i"))); }
-      scenes.forEach((sc, i) => {
-        const stt = sceneState(String(sc.scene_id), st);
-        const b = bar.children[i]; if (!b) return;
-        b.className = stt === "rendered" ? "done" : stt === "error" ? "fail" : (stt === "coding" || stt === "retry") ? "live" : "";
-      });
-    }
 
     // error
     const eb = document.getElementById("errbar");
@@ -503,20 +799,11 @@
   function ensureMounted() {
     const k = keyFor();
     if (k === mountKey) return false;
-    mountKey = k; filmMounted = false;
+    mountKey = k;
     root.innerHTML = view === "home" ? homeShell() : view === "cut" ? cutShell() : labShell();
     wire();
-    if (view === "cut") mountFilm();
     if (view === "lab") { renderFeed(); patchLab(); }
     return true;
-  }
-
-  function mountFilm() {
-    if (filmMounted || !jobState || jobState.status !== "completed") return;
-    const v = document.getElementById("film-video");
-    if (!v) return;
-    v.src = `/video/${selectedId}`;
-    filmMounted = true;
   }
 
   /* ── patch home chrome (no remount) ── */
@@ -568,18 +855,13 @@
     const si = document.getElementById("slate-input"), sg = document.getElementById("slate-go");
     if (sg) sg.onclick = () => openSetup(si ? si.value : "");
     if (si) si.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); openSetup(si.value); } };
+    // render-engine toggle: set the mode for the next job, restyle the segments
+    root.querySelectorAll("#rm-toggle .rm-opt").forEach((b) => b.onclick = () => {
+      renderMode = b.dataset.rm;
+      b.parentElement.querySelectorAll(".rm-opt").forEach((x) => x.classList.toggle("on", x === b));
+    });
 
-    // film player (cut)
-    const bp = document.getElementById("bigplay"), v = document.getElementById("film-video"), screen = document.getElementById("screen");
-    if (bp && v) bp.onclick = () => v.play().catch(() => {});
-    if (v && screen) {
-      v.onplay = () => { screen.classList.add("played"); v.setAttribute("controls", ""); };
-      v.ontimeupdate = () => {
-        if (!v.duration) return;
-        const p = document.getElementById("film-prog"); if (p) p.style.width = (v.currentTime / v.duration) * 100 + "%";
-        const tm = document.getElementById("film-tm"); if (tm) tm.textContent = `${fmtDur(v.currentTime)} / ${fmtDur(v.duration)}`;
-      };
-    }
+    // film player (cut) — video.js <video-player> default skin handles its own controls
     // scene clips (cut)
     root.querySelectorAll('.frame[data-st="rendered"]').forEach((f) =>
       f.onclick = () => openClip(`SC ${f.dataset.id} — ${f.dataset.title}`, `/video/${selectedId}/scene/${f.dataset.id}`));
@@ -595,6 +877,10 @@
     if (cs) cs.onclick = (e) => { if (e.target === cs) closeClip(); };
     if (cx) cx.onclick = closeClip;
 
+    // retry/resume a failed job from the lab error bar
+    const rb = document.getElementById("retry-btn");
+    if (rb) rb.onclick = () => resumeJob(selectedId, rb);
+
     wireSetup();
   }
 
@@ -603,6 +889,13 @@
       document.getElementById("drawer")?.classList.remove("show");
       document.getElementById("scrim")?.classList.remove("show");
       selectJob(el.dataset.id);
+    });
+    // retry buttons on failed cards — stop the click bubbling to selectJob
+    root.querySelectorAll(".cs-retry[data-retry]").forEach((b) => b.onclick = (e) => {
+      e.stopPropagation();
+      document.getElementById("drawer")?.classList.remove("show");
+      document.getElementById("scrim")?.classList.remove("show");
+      resumeJob(b.dataset.retry, b);
     });
   }
 
@@ -795,6 +1088,7 @@
     [roll, direct].forEach((b) => b && (b.disabled = true));
     try {
       const body = brief ? { topic: setupPrompt, brief } : { topic: setupPrompt };
+      if (renderMode && renderMode !== "hybrid") body.render_mode = renderMode;
       const res = await api("/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       closeSetup();
       await pollJobs();
@@ -804,6 +1098,36 @@
     } finally {
       setupBusy = false;
       [roll, direct].forEach((b) => b && (b.disabled = false));
+    }
+  }
+
+  // Resume a failed/stalled job — backend re-runs from saved state, skipping
+  // scenes already rendered/voiced. Jumps the view to the lab to watch it finish.
+  async function resumeJob(jobId, btn) {
+    if (!jobId) return;
+    if (btn) { btn.disabled = true; btn.textContent = "↻ Resuming…"; }
+    try {
+      await api(`/job/${jobId}/resume`, { method: "POST" });
+      await pollJobs();
+      selectJob(jobId, "lab");
+    } catch (e) {
+      alert(`Could not resume: ${e.message}`);
+      if (btn) { btn.disabled = false; btn.textContent = "↻ Retry"; }
+    }
+  }
+
+  // Stop a running job. Backend halts the pipeline between graph nodes and
+  // persists progress as 'cancelled' so it can be resumed later.
+  async function cancelJob(jobId, btn) {
+    if (!jobId) return;
+    if (!confirm("Stop this job? Progress is saved — you can resume it later.")) return;
+    if (btn) { btn.disabled = true; btn.textContent = "■ Stopping…"; }
+    try {
+      await api(`/job/${jobId}/cancel`, { method: "POST" });
+      await pollJobs();
+    } catch (e) {
+      alert(`Could not stop: ${e.message}`);
+      if (btn) { btn.disabled = false; btn.textContent = "■ Stop"; }
     }
   }
 
@@ -829,7 +1153,7 @@
     const remounted = ensureMounted();
     if (!remounted) {
       if (view === "lab") patchLab();
-      else if (view === "cut") { mountFilm(); }
+      // cut is static once mounted; video.js owns the player
     }
   }
 

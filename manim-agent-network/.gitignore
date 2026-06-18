@@ -57,13 +57,20 @@ nosetests.xml
 # ─── Generated runtime artifacts ─────────────────────────────────────────────
 workspace/temp/
 workspace/outputs/
-workspace/_warmup/*.png
-workspace/_warmup/*.mp4
+workspace/_warmup/
+workspace/_frmchk/
+workspace/jobs.db*
+workspace/probe_*.json
+graphify-out/
 *.mp4
 *.wav
 *.mp3
 *.aac
 !docs/**/*.mp4
+!assets/**/*.mp4
+# README media (curated, committed)
+!assets/**/*.gif
+!assets/**/*.png
 
 # ─── Manim render junk ───────────────────────────────────────────────────────
 media/

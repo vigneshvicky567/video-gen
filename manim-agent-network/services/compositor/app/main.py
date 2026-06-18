@@ -18,7 +18,7 @@ from shared.schemas.responses import AssemblerResponse
 from shared.timeouts import chunk_render_timeout_s
 from shared.log import get_logger, set_log_context, timed_block, log_subprocess, log_file, make_request_logging_middleware
 
-from .duration_prober import compute_scene_timings, probe_duration, AssemblyError
+from .duration_prober import compute_scene_timings, probe_duration, freeze_pad_renders, AssemblyError
 from .llm_composer import compose_html
 from .html_validator import validate_composition
 from .chunking import partition_timings, rebase_chunk, slot_seconds
@@ -266,6 +266,12 @@ async def assemble(request: AssemblerRequest):
         output_path = Path(settings.WORKSPACE_DIR) / "outputs" / f"{request.job_id}_final.mp4"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         comp_dir = Path(settings.WORKSPACE_DIR) / "temp" / request.job_id
+
+        # Freeze-pad any video render whose narration outlasts it, so the Manim
+        # clip holds its last frame instead of vanishing mid-narration. Slot
+        # length (max of video/audio) is unchanged, so timings below still hold.
+        with timed_block(logger, "freeze-pad short renders"):
+            scene_timings = freeze_pad_renders(scene_timings, comp_dir / "padded")
 
         total_s = max(
             (t.start_time_seconds + slot_seconds(t) for t in scene_timings),

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Manim Agent Network — Intro</title>
+  <style>
+    :root{
+      --bg:#0a0f1c; --surface:#121a2e; --line:#22304d;
+      --fg:#f1f5f9; --muted:#94a3b8;
+      --cyan:#22d3ee; --violet:#a78bfa; --amber:#fbbf24; --green:#34d399;
+    }
+    html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:var(--bg);
+      font-family:"Inter","Segoe UI",Arial,sans-serif;}
+    #root{position:relative;width:1920px;height:1080px;background:
+      radial-gradient(1200px 700px at 50% 38%, #0e1730 0%, #0a0f1c 62%);overflow:hidden;}
+
+    /* decorative dot field */
+    .glow{position:absolute;left:50%;top:42%;width:1100px;height:1100px;transform:translate(-50%,-50%);
+      background:radial-gradient(circle, rgba(34,211,238,.16) 0%, rgba(167,139,250,.07) 38%, transparent 66%);
+      filter:blur(8px);}
+    .dot{position:absolute;width:6px;height:6px;border-radius:50%;background:#2b3b5e;}
+
+    /* shared full-screen group */
+    .group{position:absolute;inset:0;display:flex;flex-direction:column;
+      align-items:center;justify-content:center;text-align:center;}
+
+    /* ── title ── */
+    .kicker{font-size:26px;letter-spacing:.42em;color:var(--cyan);font-weight:600;
+      text-transform:uppercase;margin-bottom:30px;}
+    .title-mask{overflow:hidden;padding:6px 0;}
+    .title{font-size:138px;line-height:.98;font-weight:800;letter-spacing:-.02em;margin:0;
+      background:linear-gradient(120deg,#ffffff 0%,#cfe9ff 42%,var(--cyan) 78%,var(--violet) 100%);
+      -webkit-background-clip:text;background-clip:text;color:transparent;}
+    .subtitle{font-size:34px;color:var(--muted);max-width:1180px;margin-top:34px;line-height:1.45;}
+
+    /* ── pipeline ── */
+    .pipe-title{position:absolute;top:150px;left:0;right:0;text-align:center;
+      font-size:24px;letter-spacing:.4em;color:var(--muted);text-transform:uppercase;font-weight:600;}
+    .track{position:absolute;left:120px;right:120px;top:50%;height:200px;transform:translateY(-50%);}
+    .track-base{position:absolute;left:0;right:0;top:50%;height:3px;background:var(--line);transform:translateY(-50%);}
+    .track-active{position:absolute;left:0;right:0;top:50%;height:3px;transform:translateY(-50%);
+      background:linear-gradient(90deg,var(--cyan),var(--violet));border-radius:3px;}
+    .comet{position:absolute;top:50%;width:16px;height:16px;border-radius:50%;margin-top:-8px;margin-left:-8px;
+      background:#fff;box-shadow:0 0 18px 6px rgba(34,211,238,.85);}
+    .nodes{position:absolute;inset:0;display:flex;justify-content:space-between;align-items:center;}
+    .node{position:relative;width:212px;display:flex;flex-direction:column;align-items:center;gap:16px;}
+    .chip-node{position:relative;width:118px;height:118px;border-radius:24px;background:var(--surface);
+      border:1px solid var(--line);display:flex;align-items:center;justify-content:center;
+      font-size:46px;font-weight:800;color:var(--fg);}
+    .chip-node .ring{position:absolute;inset:-3px;border-radius:27px;
+      box-shadow:0 0 0 2px rgba(34,211,238,.0),0 0 34px 6px rgba(34,211,238,.0);}
+    .node-label{font-size:25px;font-weight:600;color:var(--fg);}
+    .node-sub{font-size:17px;color:var(--muted);margin-top:-8px;}
+    .node--video .chip-node{border-color:rgba(251,191,36,.5);}
+
+    /* ── outro ── */
+    .lockup{font-size:96px;font-weight:800;letter-spacing:-.02em;margin:0;
+      background:linear-gradient(120deg,#ffffff,var(--cyan));-webkit-background-clip:text;background-clip:text;color:transparent;}
+    .tagline{font-size:36px;color:var(--fg);margin-top:26px;font-weight:500;}
+    .chips{display:flex;gap:18px;margin-top:46px;flex-wrap:wrap;justify-content:center;max-width:1300px;}
+    .chip{font-size:24px;color:var(--fg);background:var(--surface);border:1px solid var(--line);
+      padding:14px 26px;border-radius:999px;}
+    .chip b{color:var(--cyan);font-weight:700;}
+  </style>
+</head>
+<body>
+  <div id="root" data-composition-id="root" data-start="0" data-duration="13"
+       data-width="1920" data-height="1080">
+
+    <div class="glow" id="glow"></div>
+    <div id="dotfield"></div>
+
+    <!-- PHASE 1 — title -->
+    <div class="group" id="title-group">
+      <div class="kicker" id="kicker">AI-orchestrated video pipeline</div>
+      <div class="title-mask"><h1 class="title" id="title">MANIM AGENT NETWORK</h1></div>
+      <div class="subtitle" id="subtitle">A network of AI agents turns one topic into a fully
+        narrated, animated explainer — script, code, render, voiceover, and final cut.</div>
+    </div>
+
+    <!-- PHASE 2 — pipeline -->
+    <div class="group" id="pipe-group" style="opacity:0;">
+      <div class="pipe-title" id="pipe-title">Seven agents · one LangGraph pipeline</div>
+      <div class="track">
+        <div class="track-base"></div>
+        <div class="track-active" id="track-active"></div>
+        <div class="comet" id="comet"></div>
+        <div class="nodes" id="nodes">
+          <div class="node"><div class="chip-node"><span class="ring"></span>1</div><div class="node-label">Topic</div><div class="node-sub">prompt</div></div>
+          <div class="node"><div class="chip-node"><span class="ring"></span>2</div><div class="node-label">Script</div><div class="node-sub">council</div></div>
+          <div class="node"><div class="chip-node"><span class="ring"></span>3</div><div class="node-label">Code</div><div class="node-sub">Manim · HTML</div></div>
+          <div class="node"><div class="chip-node"><span class="ring"></span>4</div><div class="node-label">Validate</div><div class="node-sub">AST · render</div></div>
+          <div class="node"><div class="chip-node"><span class="ring"></span>5</div><div class="node-label">Voiceover</div><div class="node-sub">Kokoro TTS</div></div>
+          <div class="node"><div class="chip-node"><span class="ring"></span>6</div><div class="node-label">Compositor</div><div class="node-sub">HyperFrames</div></div>
+          <div class="node node--video"><div class="chip-node"><span class="ring"></span>▶</div><div class="node-label">Video</div><div class="node-sub">final cut</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PHASE 3 — outro -->
+    <div class="group" id="outro-group" style="opacity:0;">
+      <h1 class="lockup" id="lockup">MANIM AGENT NETWORK</h1>
+      <div class="tagline" id="tagline">Topic in. Narrated, animated video out.</div>
+      <div class="chips" id="chips">
+        <div class="chip"><b>7</b> microservices</div>
+        <div class="chip"><b>LangGraph</b> orchestration</div>
+        <div class="chip"><b>self-healing</b> renders</div>
+        <div class="chip">up to <b>30&nbsp;min</b> long-form</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+  <script>
+  (function () {
+    // deterministic dot field (seeded, no Math.random at runtime)
+    function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+    const rnd=mulberry32(20260614); const df=document.getElementById('dotfield');
+    for(let i=0;i<26;i++){const d=document.createElement('div');d.className='dot';
+      d.style.left=(rnd()*1920)+'px';d.style.top=(rnd()*1080)+'px';
+      d.style.opacity=(0.15+rnd()*0.4).toFixed(2);d.style.transform='scale('+(0.6+rnd()*1.6).toFixed(2)+')';
+      df.appendChild(d);}
+
+    window.__timelines = window.__timelines || {};
+    const tl = gsap.timeline({ paused: true });
+
+    // hide things that enter later (plain DOM, controlled by timeline)
+    tl.set(["#title-group","#glow","#dotfield"], { opacity: 1 }, 0);
+
+    // background
+    tl.from("#glow", { opacity: 0, scale: 0.85, duration: 1.4, ease: "power2.out" }, 0);
+    tl.from(".dot", { opacity: 0, scale: 0, duration: 0.9, ease: "power2.out", stagger: 0.02 }, 0.1);
+
+    // PHASE 1 — title (0.3 → ~3.6)
+    tl.from("#kicker", { y: 22, opacity: 0, duration: 0.6, ease: "power3.out" }, 0.35);
+    tl.from("#title", { yPercent: 120, opacity: 0, duration: 0.95, ease: "expo.out" }, 0.55);
+    tl.from("#subtitle", { y: 26, opacity: 0, duration: 0.65, ease: "power2.out" }, 1.05);
+    tl.to("#title-group", { y: -70, opacity: 0, duration: 0.6, ease: "power2.in" }, 3.55);
+
+    // PHASE 2 — pipeline (3.95 → ~9.6)
+    tl.set("#pipe-group", { opacity: 1 }, 3.9);
+    tl.from("#pipe-title", { y: 20, opacity: 0, duration: 0.5, ease: "power3.out" }, 3.95);
+    tl.from(".track-base", { scaleX: 0, transformOrigin: "left center", duration: 0.6, ease: "power2.out" }, 4.05);
+    // nodes pop left→right
+    tl.from(".node", { scale: 0.35, opacity: 0, duration: 0.5, ease: "back.out(2)", stagger: 0.52 }, 4.25);
+    // ring glow lights each node as it lands (cyan, amber on the last)
+    tl.fromTo(".node:not(.node--video) .ring",
+      { boxShadow: "0 0 0 2px rgba(34,211,238,0), 0 0 0 0 rgba(34,211,238,0)" },
+      { boxShadow: "0 0 0 2px rgba(34,211,238,.65), 0 0 30px 6px rgba(34,211,238,.45)",
+        duration: 0.5, ease: "power2.out", stagger: 0.52 }, 4.4);
+    // active line + comet travel with the stagger (~3.3s across 6 gaps)
+    tl.fromTo("#track-active", { scaleX: 0 }, { scaleX: 1, transformOrigin: "left center", duration: 3.3, ease: "none" }, 4.5);
+    tl.set("#comet", { x: 106 }, 4.5);
+    tl.fromTo("#comet", { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power1.out" }, 4.5);
+    tl.to("#comet", { x: 1574, duration: 3.3, ease: "none" }, 4.5);
+    tl.to("#comet", { opacity: 0, duration: 0.3 }, 7.8);
+    // Video node lands amber + emphasis pop
+    tl.fromTo(".node--video .ring",
+      { boxShadow: "0 0 0 2px rgba(251,191,36,0), 0 0 0 0 rgba(251,191,36,0)" },
+      { boxShadow: "0 0 0 2px rgba(251,191,36,.8), 0 0 42px 10px rgba(251,191,36,.5)", duration: 0.6, ease: "power2.out" }, 7.55);
+    tl.to(".node--video .chip-node", { scale: 1.14, duration: 0.4, yoyo: true, repeat: 1, ease: "power2.inOut" }, 7.6);
+    tl.to("#pipe-group", { opacity: 0, y: -40, duration: 0.6, ease: "power2.in" }, 9.7);
+
+    // PHASE 3 — outro (10.05 → 13)
+    tl.set("#outro-group", { opacity: 1 }, 10.0);
+    tl.from("#lockup", { scale: 0.9, opacity: 0, duration: 0.7, ease: "power3.out" }, 10.05);
+    tl.from("#tagline", { y: 24, opacity: 0, duration: 0.6, ease: "power2.out" }, 10.45);
+    tl.from(".chip", { y: 18, opacity: 0, scale: 0.9, duration: 0.45, ease: "back.out(1.6)", stagger: 0.13 }, 10.85);
+    // final fade (allowed on final scene)
+    tl.to("#outro-group", { opacity: 0, duration: 0.8, ease: "power2.in" }, 12.2);
+    tl.to("#glow", { opacity: 0, duration: 0.8, ease: "power2.in" }, 12.2);
+
+    window.__timelines["root"] = tl;
+  })();
+  </script>
+</body>
+</html>

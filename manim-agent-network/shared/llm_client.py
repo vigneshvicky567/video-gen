@@ -127,10 +127,31 @@ _acquire_rate_slot = _acquire_rate_slot_sync
 
 # ── NIM completions ───────────────────────────────────────────────────────────
 
+def _normalize_payload_for_backend(payload: dict) -> dict:
+    """Adapt the payload to the backend named by NVIDIA_BASE_URL.
+
+    NIM (kimi/qwen) takes `max_tokens` + free `temperature`/`top_p`.
+    OpenAI reasoning models (gpt-5.x) renamed `max_tokens` -> `max_completion_tokens`
+    and only accept the default temperature (1.0), so we drop sampling overrides
+    when pointed at OpenAI. Keyed off the base URL so a NIM<->OpenAI swap in .env
+    needs no code change. ponytail: host-substring check, widen if a 3rd backend appears.
+    """
+    if "openai.com" not in settings.NVIDIA_BASE_URL:
+        return payload
+    p = dict(payload)
+    if "max_tokens" in p:
+        p["max_completion_tokens"] = p.pop("max_tokens")
+    # Reasoning models reject non-default temperature/top_p — strip them.
+    p.pop("temperature", None)
+    p.pop("top_p", None)
+    return p
+
+
 class _NimCompletions:
     def _do_request(self, payload: dict) -> SimpleNamespace:
         """Execute one HTTP request to NIM (sync, blocking). Called from thread pool."""
         url = f"{settings.NVIDIA_BASE_URL.rstrip('/')}/chat/completions"
+        payload = _normalize_payload_for_backend(payload)
         model = payload.get("model", "?")
         msgs = payload.get("messages", [])
         prompt_chars = sum(len(m.get("content") or "") for m in msgs)

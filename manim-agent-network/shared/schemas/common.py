@@ -89,3 +89,5 @@ class TopicAnalysis(BaseModel):
 class GenerationRequest(BaseModel):
     topic: str
     brief: Optional[GenerationBrief] = None
+    # "hybrid" (per-scene auto-pick), "manim", or "hyperframes". None -> server default.
+    render_mode: Optional[str] = None

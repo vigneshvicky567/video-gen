@@ -8,11 +8,15 @@ This module provides functionality to:
 import json
 import logging
 import subprocess
-from typing import Dict, List, Optional
+from pathlib import Path
+from typing import Dict, List, Optional, Union
 
 from shared.schemas.common import SceneTimingRecord
 
 logger = logging.getLogger(__name__)
+
+# Freeze-pad gaps below this (seconds) aren't worth a re-encode.
+_PAD_EPSILON = 0.05
 
 
 class AssemblyError(Exception):
@@ -148,5 +152,69 @@ def compute_scene_timings(
         ))
         
         accumulated += max(video_dur, audio_dur)
-    
+
     return records
+
+
+def freeze_pad_renders(
+    scene_timings: List[SceneTimingRecord],
+    pad_dir: Union[str, Path],
+) -> List[SceneTimingRecord]:
+    """Freeze-pad each video render whose narration audio outlasts the video.
+
+    A scene's ``<video>`` element in the composition is given
+    ``data-duration`` = the slot (max of video/audio). When the narration audio
+    is longer than the rendered Manim video, the mp4 ends mid-slot and the
+    ``<video>`` element goes blank for the remainder — the visual "disappears"
+    before the narration finishes. HyperFrames ``.html`` scenes don't have this
+    problem (their final DOM state persists), so only real video files are
+    padded.
+
+    For each affected mp4 we clone the last frame for the missing duration with
+    ffmpeg ``tpad``, producing a file that is genuinely slot-long. Returns a new
+    list with ``render_path`` / ``actual_video_duration_seconds`` updated for any
+    padded scene. Fail-soft: on any ffmpeg error the original record is kept so
+    padding can never abort a job.
+    """
+    pad_dir = Path(pad_dir)
+    updated: List[SceneTimingRecord] = []
+    for t in scene_timings:
+        gap = t.actual_audio_duration_seconds - t.actual_video_duration_seconds
+        if (
+            t.render_path.lower().endswith(".html")
+            or t.actual_video_duration_seconds <= 0
+            or gap <= _PAD_EPSILON
+        ):
+            updated.append(t)
+            continue
+
+        pad_dir.mkdir(parents=True, exist_ok=True)
+        out = pad_dir / f"scene_{t.scene_id}.mp4"
+        cmd = [
+            "ffmpeg", "-y", "-i", t.render_path,
+            "-vf", f"tpad=stop_mode=clone:stop_duration={gap:.3f}",
+            "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "30",
+            str(out),
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        except Exception as e:  # noqa: BLE001 — never let padding abort a job
+            logger.warning("freeze-pad ffmpeg crashed for scene %s (%s); keeping original render",
+                           t.scene_id, e)
+            updated.append(t)
+            continue
+
+        if result.returncode != 0 or not out.exists() or out.stat().st_size == 0:
+            logger.warning("freeze-pad failed for scene %s (rc=%s); keeping original render: %s",
+                           t.scene_id, result.returncode, result.stderr[:300])
+            updated.append(t)
+            continue
+
+        logger.info("freeze-padded scene %s: %.3fs video -> %.3fs slot",
+                    t.scene_id, t.actual_video_duration_seconds, t.actual_audio_duration_seconds)
+        updated.append(t.model_copy(update={
+            "render_path": str(out),
+            "actual_video_duration_seconds": round(t.actual_audio_duration_seconds, 3),
+        }))
+
+    return updated

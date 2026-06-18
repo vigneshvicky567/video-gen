@@ -39,6 +39,12 @@ async def _bounded_gather(coros: list, limit: int) -> list:
 
 
 async def script_writer_node(state: LangGraphState):
+    # Resume-safe: a saved script means this job already passed this stage. Re-running
+    # would regenerate a NON-DETERMINISTIC breakdown (different scene count/ids),
+    # orphaning the render_paths keyed by the old ids. Keep the existing script.
+    if state.get("script"):
+        logger.info("Script already present — skipping Script Writer (resume)")
+        return {"status": "script_generation"}
     logger.info("Executing Script Writer Node")
     try:
         data = await _post(f"{settings.SCRIPT_WRITER_URL}/generate", {
@@ -65,7 +71,8 @@ async def _generate_one_scene(scene: dict, job_id: str, state: LangGraphState) -
             "scene": scene,
             "job_id": job_id,
             "error_log": state.get("error_logs", {}).get(scene_id),
-            "previous_code": state.get("previous_code", {}).get(scene_id)
+            "previous_code": state.get("previous_code", {}).get(scene_id),
+            "render_mode": (state.get("brief") or {}).get("render_mode"),
         }
         res = await _post(f"{settings.CODE_GENERATOR_URL}/generate", request_data)
         logger.info(f"[PARALLEL] Code generated for scene {scene_id}: {res['code_path']}")
