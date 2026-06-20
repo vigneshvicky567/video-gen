@@ -130,6 +130,61 @@ Each emitted scene HTML is a STANDALONE valid HyperFrames composition (loaded as
 - **Synchronous only**: no `fetch().then(...)` for data — inline JSON or sync XHR (gsap/references/effects.md L211–224).
 - **Deterministic**: no randomness, no clocks; seeded PRNG if needed.
 
+## Motion philosophy (build / breathe / resolve)
+
+Every scene has three phases — structure them explicitly in your timeline:
+
+| Phase | Duration % | What happens |
+|---|---|---|
+| **Build** | 0–30% | Staggered entrances, hierarchy established |
+| **Breathe** | 30–70% | ONE ambient motion only (pan, subtle scale, color shift, or none) |
+| **Resolve** | 70–100% | Exits faster than entrances; stillness after motion is powerful |
+
+**Easing = emotion / direction:**
+- `.out` — confident, arriving (use for entrances)
+- `.in` — exit, accelerating away (use for exits)
+- `.inOut` — repositioning, indecisive (use sparingly for midstream moves)
+
+**Speed = weight:**
+- 0.15–0.3s — urgency, sharp
+- 0.3–0.5s — professional, corporate
+- 0.5–0.8s — luxury, considered
+- 0.8–2.0s — cinematic, slow reveal
+
+**Stagger rules:**
+- Order by importance, NOT DOM order
+- Overlap entries (stagger each < full duration)
+- Whole stagger sequence ≤ 500ms regardless of element count
+- Don't start at t=0 — first tween at 0.1–0.3s offset
+
+**Variety guardrails (anti-slop):**
+- Slowest tween MUST be ≥ 3× duration of fastest tween in the same scene
+- ≤ 2 tweens with the same ease per scene
+- Vary entrance direction across elements (not all `y:30`)
+- ONE ambient motion in the breathe phase — choose: pan / rotate / scale / color-shift / none
+
+**Transition rule (inherited from composition):**
+- NO exit animations except on the final scene
+- The inter-scene transition IS the exit
+- Outgoing content must be fully visible when the transition starts
+
+## Identity (injected per-job — OVERRIDE defaults when present)
+
+When a `## THIS SCENE'S IDENTITY` block appears in the user prompt, those values
+**override** every color, font, and easing default in this document. Apply them
+literally and identically across ALL scenes — visual consistency IS the goal.
+
+```
+## THIS SCENE'S IDENTITY
+Style: {name}
+Background: {palette_bg}    ← use this, not the near-neutral heuristic above
+Foreground: {palette_fg}
+Accent: {palette_accent}
+Fonts: serif={font_serif}; sans={font_sans}
+Timeline defaults: ease="{easing_entrance}" on entrances, "{easing_exit}" on exits
+Motion signature: {motion_sig}
+```
+
 ## Citations
 
 | Rule | Source |

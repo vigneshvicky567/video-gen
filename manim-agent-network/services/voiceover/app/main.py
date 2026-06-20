@@ -25,7 +25,7 @@ def _validate_audio(path: str) -> Tuple[bool, str]:
     audio_path = Path(path)
     if not audio_path.exists():
         return False, f"audio file missing: {path}"
-    if audio_path.stat().st_size < 44:  # WAV header is 44 bytes minimum
+    if audio_path.stat().st_size < 44:  # smaller than any viable WAV/MP3 file
         return False, f"audio file too small ({audio_path.stat().st_size} bytes): {path}"
 
     result = subprocess.run(
@@ -96,7 +96,7 @@ def _clean_for_tts(text: str) -> str:
     return text.strip()
 
 
-def generate_kokoro_tts(text: str, output_path: str) -> Tuple[bool, str]:
+def generate_kokoro_tts(text: str, output_path: str, speed: float = 1.0) -> Tuple[bool, str, list]:
     try:
         import numpy as np
         import soundfile as sf
@@ -105,21 +105,29 @@ def generate_kokoro_tts(text: str, output_path: str) -> Tuple[bool, str]:
         # Generate one sentence at a time. eSpeak's line-mismatch crash is
         # content-dependent; isolating sentences means a single bad one is
         # SKIPPED (logged) instead of failing the whole scene's narration.
+        # Per-sentence synthesis ALSO gives EXACT timing: each sentence's sample
+        # count is its real duration, so we can hand code-gen a precise cue sheet.
         sentences = _split_sentences(_clean_for_tts(text))
         logger.info("Kokoro TTS", extra={"sentences": len(sentences), "text_chars": len(text)})
 
         sample_rate = 24000
-        silence = np.zeros(int(sample_rate * 0.15), dtype=np.float32)  # 150ms gap
+        gap = 0.15
+        silence = np.zeros(int(sample_rate * gap), dtype=np.float32)  # 150ms gap
         all_samples = []
+        segments: list = []
+        cursor = 0.0
         skipped = 0
         for sent in sentences:
             try:
                 s, sample_rate = kokoro.create(
                     sent,
                     voice=settings.KOKORO_VOICE,
-                    speed=float(settings.KOKORO_SPEED),
+                    speed=speed,
                     lang=settings.KOKORO_LANG,
                 )
+                dur = len(s) / float(sample_rate)
+                segments.append({"text": sent, "start": round(cursor, 3), "duration": round(dur, 3)})
+                cursor += dur + gap
                 all_samples.append(s)
                 all_samples.append(silence)
             except Exception as se:
@@ -128,7 +136,7 @@ def generate_kokoro_tts(text: str, output_path: str) -> Tuple[bool, str]:
                                                                     "sentence": sent[:80]})
 
         if not all_samples:
-            return False, "Kokoro produced no audio (every sentence failed phonemization)"
+            return False, "Kokoro produced no audio (every sentence failed phonemization)", []
         if skipped:
             logger.warning(f"Kokoro skipped {skipped}/{len(sentences)} sentences")
 
@@ -139,10 +147,84 @@ def generate_kokoro_tts(text: str, output_path: str) -> Tuple[bool, str]:
             log_file(logger, "written", output_path)
         else:
             logger.warning("Kokoro audio validation failed", extra={"reason": reason})
-        return ok, reason
+        return ok, reason, segments
     except Exception as exc:
         logger.error("Kokoro generation failed", extra={"error": str(exc)}, exc_info=True)
-        return False, f"Kokoro generation failed: {exc}"
+        return False, f"Kokoro generation failed: {exc}", []
+
+
+def _speed_to_rate(speed: float) -> str:
+    """edge-tts wants a percentage delta string, e.g. 1.3 -> '+30%', 0.9 -> '-10%'."""
+    pct = int(round((speed - 1.0) * 100))
+    return f"+{pct}%" if pct >= 0 else f"{pct}%"
+
+
+def generate_edge_tts(text: str, output_path: str, speed: float = 1.0) -> Tuple[bool, str, list]:
+    """Free fallback TTS via Microsoft edge-tts (no API key, network required).
+
+    Used when Kokoro is unavailable (missing model, phonemizer failure). Writes
+    MP3 bytes to output_path (which carries a .mp3 suffix via _provider_output_path);
+    validation is ffprobe-based. Reuses the same text cleaning as Kokoro."""
+    try:
+        import edge_tts
+
+        clean = _clean_for_tts(text)
+        if not clean:
+            return False, "edge-tts: empty text after cleaning", []
+
+        rate = _speed_to_rate(speed)
+
+        async def _run() -> None:
+            communicate = edge_tts.Communicate(clean, settings.EDGE_TTS_VOICE, rate=rate)
+            await communicate.save(output_path)
+
+        # generate_edge_tts runs inside a worker thread (asyncio.to_thread), so
+        # there is no running loop here — asyncio.run is safe.
+        asyncio.run(_run())
+
+        ok, reason = _validate_audio(output_path)
+        if ok:
+            log_file(logger, "written", output_path)
+        else:
+            logger.warning("edge-tts audio validation failed", extra={"reason": reason})
+        segments = _proportional_segments(text, _audio_duration(output_path)) if ok else []
+        return ok, reason, segments
+    except Exception as exc:
+        logger.error("edge-tts generation failed", extra={"error": str(exc)}, exc_info=True)
+        return False, f"edge-tts generation failed: {exc}", []
+
+
+def generate_piper_tts(text: str, output_path: str, speed: float = 1.0) -> Tuple[bool, str]:
+    """Offline neural fallback via Piper (ONNX). Fully local, no network.
+
+    Independent of Kokoro's runtime and phonemizer path (separate package), so it
+    survives the exact failure that killed Kokoro (onnxruntime/CUDA import, misaki
+    phoneme line-mismatch). Driven via the `piper` CLI with text on stdin — the
+    -m/-f flags are stable across piper versions, unlike the changing Python API.
+    Writes WAV. Speed is left at the model default (piper is the fallback)."""
+    try:
+        clean = _clean_for_tts(text)
+        if not clean:
+            return False, "piper: empty text after cleaning", []
+        model = settings.PIPER_MODEL_PATH
+        if not Path(model).exists():
+            return False, f"piper model missing: {model}", []
+
+        cmd = ["piper", "-m", model, "-f", output_path]
+        result = subprocess.run(cmd, input=clean, capture_output=True, text=True)
+        if result.returncode != 0:
+            return False, f"piper failed (rc={result.returncode}): {result.stderr.strip()[:200]}", []
+
+        ok, reason = _validate_audio(output_path)
+        if ok:
+            log_file(logger, "written", output_path)
+        else:
+            logger.warning("piper audio validation failed", extra={"reason": reason})
+        segments = _proportional_segments(text, _audio_duration(output_path)) if ok else []
+        return ok, reason, segments
+    except Exception as exc:
+        logger.error("piper generation failed", extra={"error": str(exc)}, exc_info=True)
+        return False, f"piper generation failed: {exc}", []
 
 
 def _split_sentences(text: str, max_chars: int = 400) -> List[str]:
@@ -174,18 +256,57 @@ def _split_sentences(text: str, max_chars: int = 400) -> List[str]:
 
 
 
+def _audio_duration(path: str) -> float:
+    """Total seconds via ffprobe. 0.0 if unreadable."""
+    r = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", path],
+        capture_output=True, text=True,
+    )
+    try:
+        return float(r.stdout.strip())
+    except (ValueError, AttributeError):
+        return 0.0
+
+
+def _proportional_segments(text: str, total_dur: float) -> list:
+    """Approximate per-sentence timing by splitting total_dur across sentences in
+    proportion to character length. Used by providers that emit one audio blob
+    (piper/edge); kokoro reports exact per-sentence durations instead."""
+    sents = _split_sentences(_clean_for_tts(text))
+    if not sents or total_dur <= 0:
+        return []
+    lens = [max(1, len(s)) for s in sents]
+    tot = sum(lens)
+    segs, cur = [], 0.0
+    for s, l in zip(sents, lens):
+        d = total_dur * l / tot
+        segs.append({"text": s, "start": round(cur, 3), "duration": round(d, 3)})
+        cur += d
+    return segs
+
+
 def _provider_output_path(temp_dir: Path, scene_id: int, provider: str) -> str:
-    suffix = "wav"
+    # Kokoro writes WAV (soundfile); edge-tts writes MP3. Use the right extension
+    # so downstream consumers that infer format from the suffix don't misread it.
+    suffix = "mp3" if provider.lower() in ("edge_tts", "edge", "edgetts") else "wav"
     return str(temp_dir / f"scene_{scene_id}_audio.{suffix}")
 
 
-def _try_provider(provider: str, text: str, temp_dir: Path, scene_id: int) -> Tuple[bool, str, str]:
+def _try_provider(
+    provider: str, text: str, temp_dir: Path, scene_id: int, speed: float = 1.0
+) -> Tuple[bool, str, str, list]:
     output_path = _provider_output_path(temp_dir, scene_id, provider)
-    if provider.lower() == "kokoro":
-        ok, warning = generate_kokoro_tts(text, output_path)
+    p = provider.lower()
+    if p == "kokoro":
+        ok, warning, segments = generate_kokoro_tts(text, output_path, speed)
+    elif p in ("piper", "piper_tts"):
+        ok, warning, segments = generate_piper_tts(text, output_path, speed)
+    elif p in ("edge_tts", "edge", "edgetts"):
+        ok, warning, segments = generate_edge_tts(text, output_path, speed)
     else:
-        ok, warning = False, f"Unsupported voiceover provider: {provider}"
-    return ok, output_path, warning
+        ok, warning, segments = False, f"Unsupported voiceover provider: {provider}", []
+    return ok, output_path, warning, segments
 
 
 @app.post("/generate", response_model=VoiceoverResponse)
@@ -198,44 +319,69 @@ async def generate_voiceover(request: VoiceoverRequest):
 
     start_time = time.time()
     primary = settings.VOICEOVER_PROVIDER.lower()
+    # Fallback chain: comma-separated, tried in order after the primary. All-offline
+    # by default (kokoro -> piper). Each provider is a distinct engine so a runtime
+    # break in one doesn't take down the next.
+    fallbacks = [p.strip().lower() for p in (settings.VOICEOVER_FALLBACK_PROVIDER or "").split(",") if p.strip()]
     max_retries = max(1, settings.VOICEOVER_MAX_RETRIES)
     backoff = settings.VOICEOVER_RETRY_BACKOFF_SECONDS
+
+    # request.speed is None when the caller didn't specify one -> use the
+    # configured KOKORO_SPEED. An explicit value (including 1.0) overrides it.
+    speed = float(settings.KOKORO_SPEED) if request.speed is None else float(request.speed)
 
     temp_dir = Path(settings.WORKSPACE_DIR) / "temp" / request.job_id
     temp_dir.mkdir(parents=True, exist_ok=True)
 
+    # Build the ordered provider chain (primary first), de-duped, preserving order.
+    chain: List[str] = [primary] + fallbacks
+    seen: set = set()
+    chain = [p for p in chain if not (p in seen or seen.add(p))]
+    providers = [(p, idx > 0) for idx, p in enumerate(chain)]
+
     last_warning = ""
-    for attempt in range(1, max_retries + 1):
-        # Run blocking TTS in a thread so we don't stall the event loop
-        # (Kokoro ONNX inference is CPU-bound and can take several seconds)
-        ok, audio_path, warning = await asyncio.to_thread(
-            _try_provider, primary, request.narration_text, temp_dir, request.scene_id
-        )
-        if ok:
-            if warning:
-                logger.warning("Provider warning", extra={"provider": primary, "warning": warning})
-            logger.info("Voiceover produced", extra={"scene_id": request.scene_id,
-                                                      "provider": primary,
-                                                      "attempt": attempt,
-                                                      "audio_path": audio_path})
-            return VoiceoverResponse(
-                scene_id=request.scene_id,
-                audio_path=audio_path,
-                provider_used=primary,
-                fallback_used=False,
-                warning=warning or None,
+    for provider, is_fallback in providers:
+        for attempt in range(1, max_retries + 1):
+            # Run blocking TTS in a thread so we don't stall the event loop
+            # (Kokoro ONNX inference is CPU-bound and can take several seconds)
+            ok, audio_path, warning, segments = await asyncio.to_thread(
+                _try_provider, provider, request.narration_text, temp_dir, request.scene_id, speed
             )
+            if ok:
+                if warning:
+                    logger.warning("Provider warning", extra={"provider": provider, "warning": warning})
+                logger.info("Voiceover produced", extra={"scene_id": request.scene_id,
+                                                          "provider": provider,
+                                                          "fallback_used": is_fallback,
+                                                          "attempt": attempt,
+                                                          "segments": len(segments or []),
+                                                          "audio_path": audio_path})
+                return VoiceoverResponse(
+                    scene_id=request.scene_id,
+                    audio_path=audio_path,
+                    provider_used=provider,
+                    fallback_used=is_fallback,
+                    warning=warning or None,
+                    segments=segments or None,
+                )
 
-        last_warning = warning
-        logger.warning("Voiceover attempt failed", extra={"provider": primary,
-                                                           "scene_id": request.scene_id,
-                                                           "attempt": attempt,
-                                                           "max_retries": max_retries,
-                                                           "reason": warning})
-        if attempt < max_retries:
-            await asyncio.sleep(backoff)
+            last_warning = warning
+            logger.warning("Voiceover attempt failed", extra={"provider": provider,
+                                                               "is_fallback": is_fallback,
+                                                               "scene_id": request.scene_id,
+                                                               "attempt": attempt,
+                                                               "max_retries": max_retries,
+                                                               "reason": warning})
+            if attempt < max_retries:
+                await asyncio.sleep(backoff)
 
-    message = f"Voiceover failed after {max_retries} attempt(s) with {primary}: {last_warning}"
+        if len(providers) > 1 and (provider, is_fallback) != providers[-1]:
+            logger.warning("Provider exhausted, trying next in chain",
+                           extra={"failed": provider, "chain": [p for p, _ in providers],
+                                  "scene_id": request.scene_id})
+
+    tried = " -> ".join(p for p, _ in providers)
+    message = f"Voiceover failed after trying [{tried}], {max_retries} attempt(s) each: {last_warning}"
     raise HTTPException(status_code=500, detail=message)
 
 

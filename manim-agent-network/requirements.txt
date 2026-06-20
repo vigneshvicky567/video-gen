@@ -9,6 +9,7 @@ httpx>=0.24.0
 moviepy>=1.0.3
 manim>=0.18.0
 pyttsx3>=2.90
+edge-tts>=6.1.0
 python-dotenv>=1.0.0
 # Coqui TTS - uncomment if you want local TTS with voice cloning
 # Note: Requires manual installation from source or conda, not available on PyPI

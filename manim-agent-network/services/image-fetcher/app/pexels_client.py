@@ -1,14 +1,15 @@
 """
 Pexels API client for the image-fetcher service.
 
-Queries the Pexels API for royalty-free images using extracted keywords.
-Returns up to 3 image URLs per query.
+Searches each keyword SEPARATELY (MoneyPrinterTurbo's technique) and pools the
+results, rather than joining all keywords into one weak query. Returns a
+url -> alt-text map so the downstream vision-LLM stage has caption context.
 
 Validates: Requirements 2.2, 6.6, 6.7
 """
 
 import logging
-from typing import List
+from typing import Dict, List
 
 import httpx
 
@@ -18,91 +19,65 @@ logger = logging.getLogger(__name__)
 
 PEXELS_API_BASE_URL = "https://api.pexels.com/v1/search"
 
+# Per-term result count. Each keyword is searched on its own (so 4 keywords ->
+# up to 4*PER_TERM candidates pooled), then SigLIP + the vision-LLM rank them.
+PER_TERM = 5
 
-async def search_pexels(keywords: List[str]) -> List[str]:
+
+async def search_pexels(keywords: List[str]) -> Dict[str, str]:
     """
-    Search Pexels for images matching the given keywords.
-    
-    Makes a GET request to the Pexels API with:
-      - query: keywords joined by space
-      - per_page: 3
-      - orientation: landscape
-    
-    Returns up to 3 src.large image URLs.
-    
-    If PEXELS_API_KEY is absent or empty, returns an empty list immediately
-    without making a network call.
-    
-    On HTTP 4xx/5xx errors, logs a warning and returns an empty list.
-    
+    Search Pexels per-keyword and pool the results.
+
+    For each keyword, GET the Pexels API with per_page=PER_TERM, orientation
+    landscape. Results are pooled and deduped by URL across all keywords.
+
+    If PEXELS_API_KEY is absent/empty, returns {} without a network call.
+    HTTP/network errors on one keyword are logged and skipped (other keywords
+    still run) — matches MPT's "skip term, keep going" behaviour.
+
     Args:
-        keywords: List of keyword strings to search for.
-    
+        keywords: search terms (each searched separately).
+
     Returns:
-        A list of up to 3 image URLs (src.large from Pexels response).
-    
+        Ordered dict of {image_url: alt_text}. alt may be "" when Pexels omits it.
+
     Validates: Requirements 2.2, 6.6, 6.7
     """
-    # Check for API key before making any request
-    # Requirement 6.7: Skip Pexels query if PEXELS_API_KEY is not set
     if not settings.PEXELS_API_KEY:
         logger.debug("PEXELS_API_KEY not set, skipping Pexels search")
-        return []
-    
-    # Build query from keywords
-    query = " ".join(keywords)
-    if not query:
-        logger.debug("Empty query, returning empty list")
-        return []
-    
-    # Prepare request parameters
-    params = {
-        "query": query,
-        "per_page": 3,
-        "orientation": "landscape"
-    }
-    
-    # Requirement 6.6: Authorization header with API key
-    headers = {
-        "Authorization": settings.PEXELS_API_KEY
-    }
-    
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(
-                PEXELS_API_BASE_URL,
-                params=params,
-                headers=headers
-            )
-            
-            # Requirement 2.2: On HTTP 4xx/5xx, log warning and return empty list
-            if response.status_code >= 400:
-                logger.warning(
-                    f"Pexels API returned status {response.status_code} "
-                    f"for query '{query}': {response.text[:200]}"
-                )
-                return []
-            
-            # Parse response and extract src.large URLs
-            data = response.json()
-            photos = data.get("photos", [])
-            
-            image_urls = []
-            for photo in photos[:3]:
-                src = photo.get("src", {})
-                large_url = src.get("large")
-                if large_url:
-                    image_urls.append(large_url)
-            
-            logger.debug(f"Found {len(image_urls)} images for query '{query}'")
-            return image_urls
-            
-    except httpx.HTTPStatusError as e:
-        logger.warning(f"HTTP error during Pexels search: {e}")
-        return []
-    except httpx.RequestError as e:
-        logger.warning(f"Request error during Pexels search: {e}")
-        return []
-    except Exception as e:
-        logger.warning(f"Unexpected error during Pexels search: {e}")
-        return []
+        return {}
+
+    terms = [k.strip() for k in keywords if k and k.strip()]
+    if not terms:
+        logger.debug("No keywords, returning empty result")
+        return {}
+
+    headers = {"Authorization": settings.PEXELS_API_KEY}
+    results: Dict[str, str] = {}
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for term in terms:
+            params = {"query": term, "per_page": PER_TERM, "orientation": "landscape"}
+            try:
+                response = await client.get(PEXELS_API_BASE_URL, params=params, headers=headers)
+                if response.status_code >= 400:
+                    logger.warning(
+                        f"Pexels API status {response.status_code} for term '{term}': "
+                        f"{response.text[:200]}"
+                    )
+                    continue
+
+                photos = response.json().get("photos", [])
+                for photo in photos:
+                    large_url = (photo.get("src") or {}).get("large")
+                    if large_url and large_url not in results:
+                        results[large_url] = photo.get("alt") or ""
+            except httpx.RequestError as e:
+                logger.warning(f"Request error during Pexels search for '{term}': {e}")
+                continue
+            except Exception as e:
+                logger.warning(f"Unexpected error during Pexels search for '{term}': {e}")
+                continue
+
+    logger.debug(f"Pexels pooled {len(results)} images across {len(terms)} terms")
+    return results

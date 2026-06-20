@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from shared.schemas.common import ScriptResponse
 
 class ScriptWriterResponse(BaseModel):
@@ -23,6 +23,9 @@ class VoiceoverResponse(BaseModel):
     provider_used: Optional[str] = None
     fallback_used: bool = False
     warning: Optional[str] = None
+    # Per-sentence timing for audio<->animation sync: [{"text","start","duration"}]
+    # in seconds, relative to the scene's audio start. Drives the code-gen cue sheet.
+    segments: Optional[List[Dict[str, Any]]] = None
 
 class AssemblerResponse(BaseModel):
     final_output_path: str

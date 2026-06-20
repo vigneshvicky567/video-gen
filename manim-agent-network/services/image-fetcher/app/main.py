@@ -6,6 +6,7 @@ and Wikimedia Commons (fallback). Downloads and validates images by magic bytes,
 then re-ranks and filters by SigLIP image-text similarity.
 """
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Dict, List
@@ -20,7 +21,9 @@ from shared.schemas.responses import ImageFetcherResponse
 
 from .keyword_extractor import extract_keywords
 from .pexels_client import search_pexels
-# from .siglip_scorer import filter_by_relevance  # TODO: enable when SigLIP models are downloaded
+from .pixabay_client import search_pixabay
+from .relevance_llm import vision_select
+from .siglip_scorer import filter_by_relevance
 from .wikimedia_client import search_wikimedia
 
 app = FastAPI(title="Image Fetcher Service", version="1.0.0")
@@ -33,9 +36,19 @@ logger = get_logger(__name__)
 JPEG_MAGIC = bytes([0xFF, 0xD8, 0xFF])
 PNG_MAGIC = bytes([0x89, 0x50, 0x4E, 0x47])
 
+# Accept only JPEG/PNG. Pexels' `auto=compress` serves WebP/AVIF when those are
+# in Accept, but validate_image_magic_bytes only knows JPEG/PNG -> ~70% of valid
+# candidates were silently dropped. Asking for jpeg/png makes the source return
+# a format the validator (and the .jpg extension) actually match.
+# ponytail: if a source ignores Accept and serves WebP anyway, add WebP magic
+# bytes to validate_image_magic_bytes instead of widening this header.
+# Wikimedia's upload host enforces a robot policy: it 403s any User-Agent that
+# contains the "example.com" placeholder or a bare library token like
+# "python-httpx". A real client name + contact passes. (Proven: example.com -> 403,
+# real contact -> 200.) Other sources don't care, so one compliant UA serves all.
 DOWNLOAD_HEADERS = {
-    "User-Agent": "ManimAgentNetwork/1.0 (https://github.com/manim-agent-network; contact@example.com) python-httpx",
-    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+    "User-Agent": "ManimAgentNetwork/1.0 (https://github.com/manim-agent-network; admin@kineticstudios.dev)",
+    "Accept": "image/jpeg,image/png,image/*;q=0.8",
     "Referer": "https://commons.wikimedia.org/",
 }
 
@@ -148,53 +161,70 @@ async def fetch_images_for_scene(
     set_log_context(scene_id=scene_id)
     logger.info("Fetching images", extra={"scene_id": scene_id})
 
-    # Step 1: Extract keywords
+    # Step 1: Extract keywords (semantic LLM call; regex fallback warns loudly)
     keywords = extract_keywords(narration_text, visual_description)
     logger.info("Keywords extracted", extra={"scene_id": scene_id, "keywords": keywords})
 
-    # Step 2: Query Pexels, fallback to Wikimedia
-    if not settings.PEXELS_API_KEY:
-        logger.warning("PEXELS_API_KEY not set, skipping Pexels search", extra={"scene_id": scene_id})
-    candidate_urls = await search_pexels(keywords)
-    logger.info("Pexels results", extra={"scene_id": scene_id, "count": len(candidate_urls)})
+    # Step 2: Pool all sources per-term (Pexels + Pixabay stock, Wikimedia Commons
+    #         for educational diagrams/science/maps). All three are peers — SigLIP
+    #         + the vision LLM rank the combined pool, so the best image wins per
+    #         scene regardless of source. candidates: {url: alt_text}
+    pexels, pixabay, commons = await asyncio.gather(
+        search_pexels(keywords),
+        search_pixabay(keywords),
+        search_wikimedia(keywords),
+    )
+    candidates: Dict[str, str] = {}
+    candidates.update(pexels)
+    candidates.update(pixabay)
+    candidates.update(commons)
+    logger.info(
+        "Pooled candidates",
+        extra={"scene_id": scene_id, "pexels": len(pexels),
+               "pixabay": len(pixabay), "commons": len(commons),
+               "total": len(candidates)},
+    )
 
-    if not candidate_urls:
-        candidate_urls = await search_wikimedia(keywords)
-        logger.info("Wikimedia results", extra={"scene_id": scene_id, "count": len(candidate_urls)})
-        if not candidate_urls:
-            logger.warning(
-                "No image candidates found",
-                extra={"scene_id": scene_id, "keywords": keywords}
-            )
+    if not candidates:
+        logger.warning("No image candidates found",
+                       extra={"scene_id": scene_id, "keywords": keywords})
+        return []
 
-    # Step 3: Download + magic-byte validate
+    # Step 3: Download + magic-byte validate. Carry alt text onto the saved path.
     image_paths: List[str] = []
-    for idx, url in enumerate(candidate_urls):
-        output_dir  = Path(settings.WORKSPACE_DIR) / "temp" / job_id / "images" / f"scene_{scene_id}"
+    path_alts: Dict[str, str] = {}
+    output_dir = Path(settings.WORKSPACE_DIR) / "temp" / job_id / "images" / f"scene_{scene_id}"
+    for idx, (url, alt) in enumerate(candidates.items()):
         output_path = output_dir / f"img_{idx}.jpg"
         if await download_and_validate_image(url, output_path, scene_id, idx):
-            image_paths.append(str(output_path.absolute()))
+            abs_path = str(output_path.absolute())
+            image_paths.append(abs_path)
+            path_alts[abs_path] = alt
 
     logger.info("Downloaded images", extra={"scene_id": scene_id, "count": len(image_paths)})
-
     if not image_paths:
         return []
 
-    # TODO: SigLIP relevance filter — uncomment when models are available
-    # query = f"{visual_description}. {narration_text}"
-    # ranked = filter_by_relevance(image_paths, query_text=query, top_k=3)
-    # logger.info("After SigLIP filter", extra={"scene_id": scene_id,
-    #                                            "before": len(image_paths),
-    #                                            "after": len(ranked)})
-    # return ranked
+    # Step 4 (Stage 1): SigLIP visual ranking — keep top 5 to feed the vision LLM.
+    # Degrades to pass-through (top_k) if the SigLIP model files are absent.
+    query = f"{visual_description}. {narration_text}"
+    ranked = await asyncio.to_thread(filter_by_relevance, image_paths, query, top_k=5)
+    logger.info("After SigLIP filter",
+                extra={"scene_id": scene_id, "before": len(image_paths), "after": len(ranked)})
 
-    return image_paths
+    # Step 5 (Stage 2): vision-LLM final vet — sees pixels, keeps best <=3.
+    # Degrades to ranked[:3] on any failure / non-vision model.
+    final = await asyncio.to_thread(
+        vision_select, ranked, path_alts, narration_text, visual_description, 3
+    )
+    logger.info("After vision vet",
+                extra={"scene_id": scene_id, "before": len(ranked), "after": len(final)})
+    return final
 
 
 @app.post("/fetch", response_model=ImageFetcherResponse)
 async def fetch_images(request: ImageFetcherRequest) -> ImageFetcherResponse:
     """Fetch images for all scenes in parallel."""
-    import asyncio
     logger.info("Image fetch request", extra={"job_id": request.job_id, "scenes": len(request.scenes)})
 
     async def _safe_fetch(scene) -> tuple:

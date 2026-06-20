@@ -11,6 +11,7 @@ import re
 import sys
 import glob
 import ast
+import base64
 
 app = FastAPI(title="Validator Service")
 app.add_middleware(make_request_logging_middleware("validator"))
@@ -107,6 +108,193 @@ def _compute_timeout(source: str) -> int:
     )
     return min(_TIMEOUT_CEILING_S, max(_TIMEOUT_FLOOR_S,
               _TIMEOUT_FLOOR_S + _TIMEOUT_PER_PLAY_S * plays))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 0: Static visual QA for HyperFrames scenes
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PURE_WHITE = re.compile(r'background(?:-color)?\s*:\s*(?:#fff(?:fff)?|white)\b', re.IGNORECASE)
+_PURE_BLACK = re.compile(r'background(?:-color)?\s*:\s*(?:#000(?:000)?|black)\b', re.IGNORECASE)
+# window.__timelines registration key extraction
+_TIMELINE_KEY_RE = re.compile(r'window\.__timelines\[\s*["\']([^"\']+)["\']\s*\]\s*=')
+# Composition id on root
+_COMP_ID_RE = re.compile(r'data-composition-id\s*=\s*["\']([^"\']+)["\']')
+
+
+def _check_hf_visual_issues(html_content: str) -> tuple:
+    """Static visual QA checks for HyperFrames HTML.
+
+    Catches common LLM anti-patterns that produce blank/invisible scenes:
+    - Pure #fff or #000 backgrounds (banned by hf_rules)
+    - Clip elements with opacity:0 in inline style (framework ignores it, element stays invisible)
+    - Missing background-color on #composition
+
+    Returns (ok: bool, issues: str). Fail-open on parse errors.
+    """
+    issues = []
+
+    # 1. Pure white/black background on #composition or body
+    comp_style_m = re.search(
+        r'id\s*=\s*["\']composition["\'][^>]*style\s*=\s*["\']([^"\']+)["\']',
+        html_content, re.IGNORECASE | re.DOTALL,
+    )
+    comp_style = comp_style_m.group(1) if comp_style_m else ""
+    body_style_m = re.search(r'<body[^>]*style\s*=\s*["\']([^"\']+)["\']', html_content, re.IGNORECASE)
+    body_style = body_style_m.group(1) if body_style_m else ""
+
+    for label, style_block in [("#composition", comp_style), ("body", body_style)]:
+        if _PURE_WHITE.search(style_block):
+            issues.append(
+                f"visual: pure white background (#fff/#ffffff) on {label} — "
+                "reads as 'nothing loaded'. Use a tinted near-neutral (e.g. #f4f1ea) per hf_rules."
+            )
+        if _PURE_BLACK.search(style_block):
+            issues.append(
+                f"visual: pure black background (#000/#000000) on {label} — "
+                "use a dark near-neutral (e.g. #0e1116) instead."
+            )
+
+    # 2. Missing explicit background-color on #composition
+    if comp_style and "background" not in comp_style.lower():
+        issues.append(
+            "visual: #composition has no background-color — scene will render transparent/white. "
+            "Add an explicit background-color per hf_rules visibility checklist."
+        )
+
+    # 3. Clip elements with opacity:0 in inline style (framework overrides CSS opacity on active clips)
+    # Two-pass: find all opening tags with data-start, then check each tag's style attr.
+    # Order-independent — avoids false-negatives from attribute ordering.
+    _tag_with_start = re.compile(r'<[a-zA-Z][^>]*\bdata-start\b[^>]*>', re.IGNORECASE | re.DOTALL)
+    _opacity_zero = re.compile(r'\bopacity\s*:\s*0(?!\.\d)', re.IGNORECASE)
+    clip_opacity_hits = []
+    for tag in _tag_with_start.findall(html_content):
+        style_m = re.search(r'\bstyle\s*=\s*["\']([^"\']*)["\']', tag, re.IGNORECASE)
+        if style_m and _opacity_zero.search(style_m.group(1)):
+            clip_opacity_hits.append(tag)
+    for hit in clip_opacity_hits[:3]:  # cap report length
+        elem_id_m = re.search(r'\bid\s*=\s*["\']([^"\']+)["\']', hit, re.IGNORECASE)
+        elem_id = elem_id_m.group(1) if elem_id_m else "?"
+        issues.append(
+            f"visual: element '{elem_id}' has data-start AND opacity:0 in inline style — "
+            "the HyperFrames framework forces opacity:1 on active clips, so CSS opacity:0 is silently overwritten. "
+            "Wrap in a no-data-attr div and animate the wrapper, or use autoAlpha via gsap.from()."
+        )
+
+    if issues:
+        return False, "\n".join(issues)
+    return True, ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 4: Vision model keyframe inspection for Manim renders
+# ─────────────────────────────────────────────────────────────────────────────
+
+_VISION_FRAME_TIMES = (0.25, 0.50, 0.75)  # fraction of duration to sample
+_VISION_MAX_IMG_BYTES = 4 * 1024 * 1024
+
+
+def _extract_frame(video_path: str, frac: float, out_path: str) -> bool:
+    """Extract one frame at `frac` of video duration into out_path via ffmpeg."""
+    # Get duration first
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+        capture_output=True, text=True, timeout=30,
+    )
+    try:
+        duration = float(probe.stdout.strip())
+    except (ValueError, AttributeError):
+        return False
+    seek_s = max(0.1, duration * frac)
+    result = subprocess.run(
+        ["ffmpeg", "-y", "-ss", str(seek_s), "-i", video_path,
+         "-vframes", "1", "-q:v", "2", out_path],
+        capture_output=True, text=True, timeout=30,
+    )
+    return result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0
+
+
+def _data_url_for_frame(path: str) -> str | None:
+    try:
+        raw = open(path, "rb").read()
+        if len(raw) > _VISION_MAX_IMG_BYTES:
+            return None
+        b64 = base64.b64encode(raw).decode("ascii")
+        mime = "image/png" if raw[:4] == b"\x89PNG" else "image/jpeg"
+        return f"data:{mime};base64,{b64}"
+    except Exception:
+        return None
+
+
+async def _vision_inspect_manim(render_path: str, scene_id: int) -> tuple:
+    """Sample 3 keyframes from a Manim render and ask the vision model if they look broken.
+
+    Returns (ok: bool, error_message: str). Fail-open on any error.
+    """
+    if not settings.VISION_INSPECT_ENABLED:
+        return True, ""
+    if not settings.IMAGE_EVAL_MODEL:
+        return True, ""
+
+    import tempfile
+    verdicts = []
+
+    try:
+        from shared.llm_client import get_llm_client
+        vision_client = get_llm_client()
+    except Exception as exc:
+        logger.warning("Vision inspect: could not get LLM client", extra={"error": str(exc)})
+        return True, ""
+
+    with tempfile.TemporaryDirectory() as td:
+        for i, frac in enumerate(_VISION_FRAME_TIMES):
+            frame_path = os.path.join(td, f"frame_{i}.jpg")
+            try:
+                ok = await asyncio.to_thread(_extract_frame, render_path, frac, frame_path)
+                if not ok:
+                    continue
+                data_url = _data_url_for_frame(frame_path)
+                if not data_url:
+                    continue
+                resp = await vision_client.chat.completions.acreate(
+                    model=settings.IMAGE_EVAL_MODEL,
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {"type": "image_url", "image_url": {"url": data_url}},
+                            {"type": "text", "text": (
+                                "This is a frame from an educational animation video. "
+                                "Is this frame: (a) ok — has visible, legible content; "
+                                "(b) broken — mostly black, white, or corrupt; "
+                                "(c) empty — nothing visible; "
+                                "(d) cluttered — unreadable due to too many overlapping elements. "
+                                "Reply with exactly one word: ok, broken, empty, or cluttered."
+                            )},
+                        ],
+                    }],
+                    max_tokens=10,
+                    temperature=0.0,
+                )
+                verdict = (resp.choices[0].message.content or "").strip().lower().split()[0]
+                verdicts.append((frac, verdict))
+                logger.info("Vision inspect frame", extra={
+                    "scene_id": scene_id, "frac": frac, "verdict": verdict,
+                })
+            except Exception as exc:
+                logger.warning("Vision inspect frame failed", extra={
+                    "scene_id": scene_id, "frac": frac, "error": str(exc)[:200],
+                })
+
+    if not verdicts:
+        return True, ""  # couldn't sample → fail-open
+
+    bad = [(f, v) for f, v in verdicts if v in ("broken", "empty", "cluttered")]
+    # Majority vote: 2/3 must be bad to fail
+    if len(bad) >= 2:
+        details = "; ".join(f"{v} at {int(f*100)}%" for f, v in bad)
+        return False, f"vision: render appears {bad[0][1]} ({details}). Check that construct() produces visible content."
+    return True, ""
 
 
 def detect_content_type(code_path: str) -> str:
@@ -456,6 +644,17 @@ async def _validate_hyperframes(request):
             if not lint_ok:
                 success, render_path, error = False, "", lint_error
 
+        # Phase 0: static visual QA (invisible elements, banned backgrounds)
+        if success:
+            try:
+                with open(request.code_path, "r", encoding="utf-8") as f:
+                    html_content = f.read()
+                qa_ok, qa_error = _check_hf_visual_issues(html_content)
+                if not qa_ok:
+                    success, render_path, error = False, "", qa_error
+            except Exception as qa_exc:
+                logger.warning("Visual QA check failed (non-fatal)", extra={"error": str(qa_exc)[:200]})
+
         if success:
             return ValidatorResponse(
                 scene_id=request.scene_id,
@@ -551,6 +750,15 @@ async def _validate_manim(request):
                 logger.info("Render output found", extra={"scene_id": request.scene_id, "path": mp4_files[0]})
                 final_path = await asyncio.to_thread(
                     _reencode_for_seek, mp4_files[0], request.scene_id)
+
+                # Phase 4: vision model keyframe inspect (gated on VISION_INSPECT_ENABLED)
+                vision_ok, vision_error = await _vision_inspect_manim(final_path, request.scene_id)
+                if not vision_ok:
+                    return ValidatorResponse(
+                        scene_id=request.scene_id,
+                        success=False,
+                        error_log=vision_error,
+                    )
 
                 return ValidatorResponse(
                     scene_id=request.scene_id,

@@ -60,6 +60,33 @@ Each scene object:
 }"""
 
 
+# Reserved question ids already folded into the typed brief fields above; the
+# rest are topic-specific questions the analyzer designed for THIS video, whose
+# answers would otherwise be collected and ignored.
+_RESERVED_QIDS = {"duration", "audience", "focus", "style", "visual_style", "pacing"}
+
+
+def _answers_block(brief: Optional[Dict[str, Any]]) -> str:
+    """Surface the creator's topic-specific questionnaire answers to the writer."""
+    if not brief:
+        return ""
+    lines: List[str] = []
+    for ans in brief.get("answers") or []:
+        if not isinstance(ans, dict):
+            continue
+        qid = str(ans.get("question_id") or "").strip()
+        if not qid or qid in _RESERVED_QIDS:
+            continue
+        picks = ", ".join(s for s in (ans.get("selected") or []) if s)
+        custom = str(ans.get("custom_text") or "").strip()
+        detail = " — ".join(p for p in (picks, custom) if p)
+        if detail:
+            lines.append(f"- {qid.replace('_', ' ')}: {detail}")
+    if not lines:
+        return ""
+    return "Creator's specific choices for this video (honor these):\n" + "\n".join(lines) + "\n"
+
+
 def _budget_block(brief: Optional[Dict[str, Any]]) -> str:
     if not brief or not brief.get("target_duration_seconds"):
         return (
@@ -78,7 +105,7 @@ scenes MUST be {target}s plus or minus 10%.
 Narration is spoken at 2.2 words/second: a scene with estimated_duration_seconds
 = D must contain about D x 2.2 narration words. Do not under- or over-write.
 Audience: {audience}. Emphasize: {focus}. Style/pacing: {style} / {pacing}.
-"""
+{_answers_block(brief)}"""
 
 
 async def _call_json(client, system: str, user: str, *, temperature: float, max_tokens: int) -> Any:
@@ -199,7 +226,7 @@ You are a curriculum designer planning a {target}-second educational video about
 **{topic}**
 
 Audience: {audience}. Emphasize: {focus}.
-
+{_answers_block(brief)}
 Break it into 3-8 sections that together tell a complete story. Distribute the
 {target}s across sections (the section time_budget_seconds MUST sum to {target}s
 plus or minus 5%). For each section give a scene_count_hint roughly equal to

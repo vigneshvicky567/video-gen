@@ -128,6 +128,69 @@ def _relative_to_composition(path: str, comp_dir: Path) -> str:
 # host element's data-start. Hand-rolled regex inlining (previous approach)
 # bypassed all of that and produced blank scenes.
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 2: Inter-scene transition system
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Energy → transition spec (CSS-only dip-to-color crossfade; no external shaders).
+# Durations are generous and easing is symmetric sine for a gentle, non-blinking
+# fade. High energy stays snappier but still eased. (Previously _transition_clip
+# hardcoded power2 and ignored these ease_* values — now wired through.)
+_TRANSITION_SPECS = {
+    "calm":   {"dur": 0.90, "ease_in": "sine.in",   "ease_out": "sine.out"},
+    "medium": {"dur": 0.65, "ease_in": "sine.in",   "ease_out": "sine.out"},
+    "high":   {"dur": 0.45, "ease_in": "power2.in",  "ease_out": "power2.out"},
+}
+_TRANSITION_TRACK_BASE = 200  # well above scene tracks, below CAPTION_Z_INDEX
+_TRANSITION_Z = 900
+
+
+def _pick_transition(energy: str, scene_idx: int, total_scenes: int) -> dict:
+    """Select transition spec based on energy level and narrative position."""
+    # Narrative position overrides: opening and outro get calm regardless of energy
+    if scene_idx == 0 or scene_idx == total_scenes - 1:
+        return _TRANSITION_SPECS["calm"]
+    return _TRANSITION_SPECS.get(energy or "medium", _TRANSITION_SPECS["medium"])
+
+
+def _transition_clip(
+    tr_id: int,
+    start: float,
+    dur: float,
+    bg_color: str,
+    track: int,
+    ease_in: str = "sine.in",
+    ease_out: str = "sine.out",
+) -> str:
+    """Build a crossfade overlay clip between two scenes.
+
+    The clip fades IN over the first half (covering the outgoing scene's end),
+    then fades OUT over the second half (revealing the incoming scene's start).
+    start = scene_N_end - dur/2  (overlaps outgoing scene end)
+    end   = start + dur           (overlaps incoming scene start)
+    Does NOT alter any existing scene data-start/data-duration values.
+    """
+    half = round(dur / 2, 3)
+    s = _format_seconds(start)
+    d = _format_seconds(dur)
+    h = _format_seconds(half)
+    return f"""      <div id="tr-{tr_id}"
+        class="clip transition-overlay"
+        data-start="{s}"
+        data-duration="{d}"
+        data-track-index="{track}"
+        style="position:absolute;inset:0;background:{bg_color};z-index:{_TRANSITION_Z};pointer-events:none;opacity:0;">
+        <script>
+          (function(){{
+            window.__timelines=window.__timelines||{{}};
+            var t=gsap.timeline({{paused:true}});
+            t.to("#tr-{tr_id}",{{autoAlpha:1,duration:{h},ease:"{ease_in}"}},0)
+             .to("#tr-{tr_id}",{{autoAlpha:0,duration:{h},ease:"{ease_out}"}},{h});
+            window.__timelines["tr-{tr_id}"]=t;
+          }})();
+        </script>
+      </div>"""
+
 
 def compose_html(
     script_title: str,
@@ -135,6 +198,7 @@ def compose_html(
     image_paths: Dict[int, List[str]],
     job_id: str,
     scene_plans: Optional[List[Any]] = None,
+    job_style: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Generate a stable HyperFrames composition from probed scene timings."""
     comp_dir = Path(settings.WORKSPACE_DIR) / "temp" / job_id
@@ -153,9 +217,21 @@ def compose_html(
         for timing in scene_timings
     ) if scene_timings else 0.001
 
+    # Resolve the job palette ONCE — used for the backdrop behind EVERY scene AND
+    # for transitions, so the whole composition shares one consistent background.
+    # Previously host/body/master fell back to hardcoded #0a0f1c/#ffffff regardless
+    # of job_style; a light-palette scene then mounted on a dark host, so whenever a
+    # scene's own bg didn't fully cover (wrapper dropped / partial / LLM drift) the
+    # wrong backdrop showed and its text/animation became invisible. One pal_bg fixes
+    # bg+text mismatch and the transition flash on the auto and explicit-style paths.
+    energy = (job_style or {}).get("energy", "medium")
+    pal_bg = (job_style or {}).get("palette_bg", "#0e1116")
+    tr_bg = pal_bg
+    n_scenes = len(scene_timings)
+
     body_parts: List[str] = []
     track = 1
-    for timing in scene_timings:
+    for timing_idx, timing in enumerate(scene_timings):
         scene_id = timing.scene_id
         start = _format_seconds(timing.start_time_seconds)
         video_duration = _format_seconds(timing.actual_video_duration_seconds)
@@ -188,7 +264,7 @@ def compose_html(
         data-start="{start}" data-duration="{slot_duration}"
         data-track-index="{track}"
         data-width="1920" data-height="1080"
-        style="position:absolute;left:0;top:0;width:1920px;height:1080px;z-index:{track};background:#0a0f1c;overflow:hidden;"></div>"""
+        style="position:absolute;left:0;top:0;width:1920px;height:1080px;z-index:{track};background:{pal_bg};overflow:hidden;"></div>"""
             )
         else:
             # Use slot_duration (max of video/audio) so the video element holds
@@ -202,7 +278,7 @@ def compose_html(
         data-duration="{slot_duration}"
         data-track-index="{track}"
         src="{rel_render}"
-        style="position:absolute;left:0;top:0;width:1920px;height:1080px;object-fit:contain;background:#ffffff;z-index:{track};"
+        style="position:absolute;left:0;top:0;width:1920px;height:1080px;object-fit:contain;background:{pal_bg};z-index:{track};"
         muted
         playsinline></video>"""
             )
@@ -242,6 +318,23 @@ def compose_html(
             )
             track += 1
 
+        # Phase 2: inject crossfade transition AFTER each scene except the last.
+        # Overlaps the end of this scene and start of the next — never shifts data-start.
+        if timing_idx < n_scenes - 1:
+            next_timing = scene_timings[timing_idx + 1]
+            tr_spec = _pick_transition(energy, timing_idx, n_scenes)
+            tr_dur = tr_spec["dur"]
+            scene_end = timing.start_time_seconds + max(
+                timing.actual_video_duration_seconds,
+                timing.actual_audio_duration_seconds,
+            )
+            tr_start = max(0.0, scene_end - tr_dur / 2)
+            tr_track = _TRANSITION_TRACK_BASE + timing_idx
+            body_parts.append(_transition_clip(
+                timing_idx, tr_start, tr_dur, tr_bg, tr_track,
+                tr_spec["ease_in"], tr_spec["ease_out"],
+            ))
+
     title = html.escape(script_title or "Generated Video", quote=False)
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -255,7 +348,7 @@ def compose_html(
       width: 1920px;
       height: 1080px;
       overflow: hidden;
-      background: #ffffff;
+      background: {pal_bg};
       font-family: Arial, Helvetica, sans-serif;
     }}
     .lower-third {{
@@ -288,7 +381,7 @@ def compose_html(
     data-duration="{_format_seconds(total_duration)}"
     data-width="1920"
     data-height="1080"
-    style="position:relative;width:1920px;height:1080px;background:#ffffff;overflow:hidden;">
+    style="position:relative;width:1920px;height:1080px;background:{pal_bg};overflow:hidden;">
 {chr(10).join(body_parts)}
   </div>
   <!-- Same GSAP URL the generated scenes use, so the compiler dedupes to one load. -->

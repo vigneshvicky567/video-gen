@@ -133,6 +133,8 @@ services:
       - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
       - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-vid gen}
       - VOICEOVER_PROVIDER=${VOICEOVER_PROVIDER:-kokoro}
+      - VOICEOVER_FALLBACK_PROVIDER=${VOICEOVER_FALLBACK_PROVIDER:-edge_tts}
+      - EDGE_TTS_VOICE=${EDGE_TTS_VOICE:-en-US-JennyNeural}
       - VOICEOVER_MAX_RETRIES=${VOICEOVER_MAX_RETRIES:-3}
       - VOICEOVER_RETRY_BACKOFF_SECONDS=${VOICEOVER_RETRY_BACKOFF_SECONDS:-2.0}
       - KOKORO_MODEL_PATH=${KOKORO_MODEL_PATH:-/models/kokoro/kokoro-v1.0.int8.onnx}
@@ -140,6 +142,15 @@ services:
       - KOKORO_VOICE=${KOKORO_VOICE:-af_sarah}
       - KOKORO_SPEED=${KOKORO_SPEED:-1.0}
       - KOKORO_LANG=${KOKORO_LANG:-en-us}
+    # GPU for Kokoro ONNX. Needs NVIDIA Container Toolkit on host; without it
+    # onnxruntime falls back to CPU (still works). Comment out if no GPU.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     depends_on:
       - base
 
@@ -158,8 +169,23 @@ services:
       - NVIDIA_BASE_URL=${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
       # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - PEXELS_API_KEY=${PEXELS_API_KEY}
+      - PIXABAY_API_KEY=${PIXABAY_API_KEY:-}
+      - IMAGE_EVAL_MODEL=${IMAGE_EVAL_MODEL:-meta/llama-4-maverick-17b-128e-instruct}
+      # keyword_extractor (this service) reads COMPOSITOR_LLM_MODEL — must be passed here.
+      - COMPOSITOR_LLM_MODEL=${COMPOSITOR_LLM_MODEL:-mistralai/mistral-small-4-119b-2603}
+      - SIGLIP_MODEL_DIR=${SIGLIP_MODEL_DIR:-/models/siglip}
+      - SIGLIP_THRESHOLD=${SIGLIP_THRESHOLD:-0.15}
       - NVIDIA_RPM=${NVIDIA_RPM:-35}
       - NVIDIA_READ_TIMEOUT_SECONDS=30
+    # GPU for SigLIP ONNX scoring. Needs NVIDIA Container Toolkit on host; without
+    # it onnxruntime falls back to CPU (still works). Comment out if no GPU.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     depends_on:
       - base
 
@@ -178,9 +204,9 @@ services:
       - NVIDIA_BASE_URL=${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
       # - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - COMPOSITOR_LLM_MODEL=${COMPOSITOR_LLM_MODEL:-moonshotai/kimi-k2-instruct}
-      - COMPOSITOR_CHUNK_THRESHOLD_SECONDS=${COMPOSITOR_CHUNK_THRESHOLD_SECONDS:-480}
-      - COMPOSITOR_CHUNK_MAX_SCENES=${COMPOSITOR_CHUNK_MAX_SCENES:-8}
-      - COMPOSITOR_CHUNK_MAX_SECONDS=${COMPOSITOR_CHUNK_MAX_SECONDS:-300}
+      - COMPOSITOR_CHUNK_THRESHOLD_SECONDS=${COMPOSITOR_CHUNK_THRESHOLD_SECONDS:-300}
+      - COMPOSITOR_CHUNK_MAX_SCENES=${COMPOSITOR_CHUNK_MAX_SCENES:-4}
+      - COMPOSITOR_CHUNK_MAX_SECONDS=${COMPOSITOR_CHUNK_MAX_SECONDS:-180}
       - COMPOSITOR_CHUNK_TIMEOUT_MAX_SECONDS=${COMPOSITOR_CHUNK_TIMEOUT_MAX_SECONDS:-3600}
       - SERVICE_HTTP_TIMEOUT_SECONDS=${SERVICE_HTTP_TIMEOUT_SECONDS:-900}
     depends_on:

@@ -45,8 +45,11 @@ def test_job_timeout_monotonic():
 
 def test_chunk_render_timeout_floor_and_growth():
     assert chunk_render_timeout_s(0) == 900          # floor
-    assert chunk_render_timeout_s(100) == 1050        # 300 + 7.5*100
+    assert chunk_render_timeout_s(100) == 1500        # 300 + 12*100
     assert chunk_render_timeout_s(10 ** 9) == int(settings.COMPOSITOR_CHUNK_TIMEOUT_MAX_SECONDS)
+    # a 180s chunk (new max) gets 300+12*180=2460s budget; at 8.4x realtime a 180s
+    # render takes ~1512s — comfortably under budget.
+    assert chunk_render_timeout_s(180) == 2460
 
 
 def test_assembler_timeout_floor_and_cap():

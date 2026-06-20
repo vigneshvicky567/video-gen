@@ -28,9 +28,36 @@ _MAX_DURATION_CEILING = 2400  # matches GenerationBrief target_duration_seconds 
 
 
 def build_analyze_prompt(topic: str) -> str:
-    return f"""You are a video production strategist. Analyze this topic and design a SHORT intake questionnaire. Be terse — short strings, no padding.
+    return f"""You are a senior video producer running intake for ONE specific video. Design a short, SHARP questionnaire: every question's answer must change how THIS video gets made. Be terse — short strings, no padding.
 
 Topic: **{topic}**
+
+First decide what is genuinely UNDECIDED about this topic. A great question resolves a real fork that sends the script in a different direction. A dumb question asks what a sensible default already answers, or what the topic text already tells you.
+
+Every non-duration question MUST pass all three tests:
+1. Decision-changing — two different answers yield visibly different scripts.
+2. Not inferable — the topic text doesn't already imply the answer.
+3. One-tap — 2-4 concrete options a non-expert picks instantly.
+
+Choose the forks that actually matter for THIS topic. Good axes to draw from (pick what fits — never ask all):
+- Angle / framing (history vs how-it-works vs why-it-matters)
+- Depth-vs-breadth tradeoff
+- Concrete-examples-first vs theory-first
+- What to deliberately EXCLUDE / assumed prior knowledge
+- Which sub-system or case study to center on
+- Tone (rigorous vs playful) when the topic genuinely supports both
+
+ANTI-PATTERNS — never ask as rote filler:
+- "Who is the audience?" UNLESS the topic truly splits (skip if topic already says "for beginners", "ELI5", "for experts", etc.).
+- Generic "what to focus on?" with vague options.
+- Anything the recommended default already answers.
+- Two questions resolving the same fork.
+
+GOOD vs DUMB (topic "How RSA encryption works"):
+- DUMB: "Who is this for? [Beginner / Advanced]"  ← topic implies a curious general audience.
+- GREAT: "Show the math or keep it intuitive? [Walk the modular arithmetic / Intuition + analogies only / Light math, mostly intuition]"  ← genuinely changes every scene.
+
+Reserved ids — use these EXACT ids when (and only when) that axis is the real fork, so answers map cleanly: "audience" (audience level), "focus" (multi-select sub-areas), "style" (visual style), "pacing". For any other axis, invent a short snake_case id (e.g. "math_depth", "angle").
 
 Return ONLY valid JSON, exactly this shape:
 {{
@@ -42,14 +69,13 @@ Return ONLY valid JSON, exactly this shape:
   "duration_presets": [180, 300, 600, 900],
   "questions": [
     {{"id": "duration", "question": "How long should the video be?", "header": "Target length", "options": [{{"label": "5 min", "description": ""}}, {{"label": "10 min", "description": ""}}], "multi_select": false, "allows_custom": true}},
-    {{"id": "audience", "question": "Who is this for?", "header": "Audience", "options": [{{"label": "Beginner", "description": ""}}, {{"label": "Some experience", "description": ""}}, {{"label": "Advanced", "description": ""}}], "multi_select": false, "allows_custom": true}},
-    {{"id": "focus", "question": "Which areas to emphasize?", "header": "Focus", "options": [{{"label": "<topic-specific>", "description": ""}}], "multi_select": true, "allows_custom": true}}
+    {{"id": "<topic-specific>", "question": "<a fork that matters for THIS topic>", "header": "<2-3 words>", "options": [{{"label": "<concrete>", "description": ""}}], "multi_select": false, "allows_custom": true}}
   ]
 }}
 
 Rules (keep it tight):
-- EXACTLY 3 questions: duration (first), audience, focus. No more.
-- "focus" options MUST be 3-4 real sub-areas of THIS topic. Other option labels: one or two words. Descriptions: empty string "" (omit prose).
+- duration question FIRST, always (id "duration"). 3-4 questions total INCLUDING duration — design the other 2-3 for this topic.
+- Option labels: 1-4 words, concrete. Descriptions: empty string "" (omit prose).
 - is_study_material = true only for skill-learning courses ("learn X", "master Y"); false for single concepts.
 - study material -> recommend 600-1500s; single concept -> 180-420s. max >= recommended.
 - duration_presets: 3-4 ascending seconds, all <= max.
@@ -249,7 +275,7 @@ async def analyze_topic(topic: str, client) -> TopicAnalysis:
                 {"role": "system", "content": "You are a video production strategist. Always respond with valid JSON only."},
                 {"role": "user", "content": build_analyze_prompt(topic)},
             ],
-            temperature=0.3,
+            temperature=0.6,
             response_format={"type": "json_object"},
             max_tokens=1200,
         )

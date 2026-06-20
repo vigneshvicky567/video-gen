@@ -44,6 +44,12 @@ _MAX_SEQ_LEN = 64
 
 
 # ── Lazy-loaded ONNX sessions ─────────────────────────────────────────────────
+# CUDA first, CPU fallback. onnxruntime silently uses the first provider it can
+# build; on a host without an sm_120-capable onnxruntime-gpu (Blackwell) it falls
+# back to CPU. We log which provider actually loaded so that's never a surprise.
+_PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+
 @lru_cache(maxsize=1)
 def _image_session():
     import onnxruntime as ort
@@ -51,8 +57,9 @@ def _image_session():
     opts.inter_op_num_threads = 2
     opts.intra_op_num_threads = 2
     logger.info("Loading SigLIP image encoder", extra={"path": str(_IMAGE_ENCODER)})
-    return ort.InferenceSession(str(_IMAGE_ENCODER), sess_options=opts,
-                                providers=["CPUExecutionProvider"])
+    sess = ort.InferenceSession(str(_IMAGE_ENCODER), sess_options=opts, providers=_PROVIDERS)
+    logger.info("SigLIP image encoder provider", extra={"provider": sess.get_providers()[0]})
+    return sess
 
 
 @lru_cache(maxsize=1)
@@ -62,8 +69,9 @@ def _text_session():
     opts.inter_op_num_threads = 2
     opts.intra_op_num_threads = 2
     logger.info("Loading SigLIP text encoder", extra={"path": str(_TEXT_ENCODER)})
-    return ort.InferenceSession(str(_TEXT_ENCODER), sess_options=opts,
-                                providers=["CPUExecutionProvider"])
+    sess = ort.InferenceSession(str(_TEXT_ENCODER), sess_options=opts, providers=_PROVIDERS)
+    logger.info("SigLIP text encoder provider", extra={"provider": sess.get_providers()[0]})
+    return sess
 
 
 @lru_cache(maxsize=1)

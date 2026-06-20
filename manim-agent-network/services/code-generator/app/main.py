@@ -12,6 +12,7 @@ from langsmith import traceable
 import re
 import json
 import time
+import base64
 
 
 def _sampling_temperature(path_default: float) -> float:
@@ -115,11 +116,133 @@ Visual baseline (override with explicit user-supplied palette when given):
 - GSAP CDN (exact URL — the compositor dedupes it against the master doc):
   https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"""
 
+# ── Stock-image compositing (Option B) ────────────────────────────────────────
+# Images are pre-fetched (image-fetcher service) and arrive as local file paths.
+# The LLM references them ONLY via `__IMAGE_k__` placeholders; we inline each to a
+# base64 data URI AFTER generation. Data URIs (not file paths) make the scene HTML
+# self-contained, so it renders identically whether the validator renders it
+# standalone or the compositor inlines it into the master doc — no file:// access,
+# no path-rebasing when the scene file is copied into compositions/.
+_IMG_INLINE_MAX_BYTES = 4 * 1024 * 1024  # skip absurd files; keeps HTML sane
+_DATA_URI_RE = re.compile(r"data:image/[^;]+;base64,[A-Za-z0-9+/=]+")
+_IMG_TOKEN_RE = re.compile(r"__IMAGE_\d+__")
+
+
+def _img_data_uri(path: str) -> str:
+    with open(path, "rb") as fh:
+        raw = fh.read()
+    if len(raw) > _IMG_INLINE_MAX_BYTES:
+        raise ValueError(f"image too large to inline: {len(raw)} bytes")
+    mime = "image/png" if raw[:4] == b"\x89PNG" else "image/jpeg"
+    return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+def _inline_images(html: str, image_paths) -> str:
+    """Replace each `__IMAGE_k__` placeholder with a base64 data URI. Unmatched or
+    unreadable placeholders are blanked so no broken src reaches the renderer."""
+    if image_paths:
+        for i, p in enumerate(image_paths):
+            token = f"__IMAGE_{i}__"
+            if token not in html:
+                continue
+            try:
+                html = html.replace(token, _img_data_uri(p))
+            except Exception as e:
+                logger.warning("Could not inline image", extra={"path": p, "error": str(e)})
+                html = html.replace(token, "")
+    # Drop any placeholder the model invented past the available image count.
+    return _IMG_TOKEN_RE.sub("", html)
+
+
+def _strip_data_uris(html: str) -> str:
+    """Shrink inlined base64 back to a marker so retry prompts stay small (the
+    previous_code carried on retry is the already-inlined file)."""
+    return _DATA_URI_RE.sub("__IMAGE_0__", html)
+
+
+def _image_guidance(n: int, duration: int) -> str:
+    if n <= 0:
+        return ""
+    toks = ", ".join(f"__IMAGE_{i}__" for i in range(n))
+    plural = "s" if n > 1 else ""
+    return f"""
+
+BACKGROUND IMAGERY — {n} relevant photo{plural} available; use the BEST one as a full-bleed background:
+- Reference images ONLY by these exact placeholders in src: {toks}. Never invent other src values, never use http(s) URLs.
+- Full-bleed bg layer: <img id="bg-photo" src="__IMAGE_0__" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;"> — object-fit:cover, never stretch.
+- Scrim for legibility: a <div style="position:absolute;inset:0;z-index:1;background:linear-gradient(...)"> using the palette's dark base at 0.55-0.85 alpha, heaviest where text sits, so all text keeps WCAG 4.5:1.
+- The `#composition` div still needs its opaque palette background-color (shows if the image fails to load). All .scene-content text/decoratives sit ABOVE the scrim (z-index:2+).
+- Ken-Burns the bg on the timeline, subtle and slow: tl.fromTo("#bg-photo", {{scale:1.0}}, {{scale:1.08, ease:"power1.inOut", duration:{duration}}}, 0).
+- If no image fits the scene's meaning, omit it — leftover placeholders are safe to drop."""
+
+
+def _cue_sheet(audio_cues, kind: str) -> str:
+    """Format per-sentence audio cues into timed beat instructions so the LLM lands
+    each animation beat on the spoken word. kind in {"hf","manim"} tailors the how-to.
+    Empty string when there are no cues (degrades to duration-based pacing)."""
+    if not audio_cues:
+        return ""
+    rows = []
+    for i, c in enumerate(audio_cues, 1):
+        s = float(c.get("start", 0) or 0)
+        d = float(c.get("duration", 0) or 0)
+        txt = (c.get("text") or "").strip().replace("\n", " ")
+        rows.append(f'  beat {i} @ {s:.1f}s (spoken {d:.1f}s): "{txt}"')
+    table = "\n".join(rows)
+    last = audio_cues[-1]
+    total = round(float(last.get("start", 0) or 0) + float(last.get("duration", 0) or 0), 1)
+    if kind == "hf":
+        how = ("Put each beat on the GSAP timeline at its cue start via the absolute position "
+               "param — e.g. `tl.from('#beat-2', {autoAlpha:0, y:30, duration:0.5}, 2.4)` reveals "
+               "beat 2 at 2.4s. Reveal a sentence's visual AT its start time: never before it's "
+               "spoken, never all at once. One beat per sentence.")
+    else:
+        how = ("Pace construct() so each beat begins at its cue start: size self.play(run_time=...) "
+               "to the cue's spoken duration and add self.wait(...) to fill gaps, so the Nth reveal "
+               "lands at the Nth cue's start.")
+    return (f"\n## AUDIO SYNC — align animation to the recorded narration (seconds from scene start)\n"
+            f"{table}\nTotal narration ~= {total}s.\n{how}\n")
+
+
 def _build_hf_prompt(scene_id: int, narration: str, visual: str, duration: int,
-                     error_log: str = None, previous_html: str = None) -> str:
+                     error_log: str = None, previous_html: str = None,
+                     image_paths=None, job_style: dict = None,
+                     neighbor_context: dict = None, audio_cues=None) -> str:
     """User-prompt body. Style + structure rules come from the system prompt
     (hf_rules.md). This message only carries scene-specific values + the two
     template strings the LLM must emit verbatim with the right scene_id."""
+
+    # Phase 1: identity block — overrides hf_rules.md palette/font defaults
+    identity_block = ""
+    if job_style:
+        identity_block = (
+            f"\n## THIS SCENE'S IDENTITY (override the Visual baseline defaults above)\n"
+            f"Style: {job_style.get('name', 'Swiss Pulse')}\n"
+            f"Background: {job_style.get('palette_bg', '#f5f5f0')} "
+            f"(use this, not the near-neutral default)\n"
+            f"Foreground: {job_style.get('palette_fg', '#1a1a1a')}\n"
+            f"Accent: {job_style.get('palette_accent', '#e63946')}\n"
+            f"Fonts: serif={job_style.get('font_serif', 'Georgia, serif')}; "
+            f"sans={job_style.get('font_sans', 'Arial, sans-serif')}\n"
+            f"Timeline defaults: ease=\"{job_style.get('easing_entrance', 'power3.out')}\" "
+            f"on entrances, \"{job_style.get('easing_exit', 'power2.in')}\" on exits\n"
+            f"Motion signature: {job_style.get('motion_sig', '')}\n"
+            f"Keep this identity identical to every other scene in this video.\n"
+        )
+
+    # Phase 3: neighbor context — helps echo/contrast adjacent scenes
+    neighbor_block = ""
+    if neighbor_context:
+        prev = neighbor_context.get("prev_visual")
+        nxt = neighbor_context.get("next_visual")
+        parts = []
+        if prev:
+            parts.append(f"← coming from: {prev}")
+        if nxt:
+            parts.append(f"→ going into: {nxt}")
+        if parts:
+            neighbor_block = "# Scene context: " + " | ".join(parts) + "\n\n"
+
     contract = f"""REQUIRED root wrapper (copy literally — the HyperFrames compiler mounts the
 scene by this exact data-composition-id, then drops the wrapper):
   <div id="composition"
@@ -148,17 +271,23 @@ Do NOT load external scripts other than the GSAP CDN.
 
 Output ONLY the complete <!DOCTYPE html>...</html> document."""
 
-    if error_log and previous_html:
-        return f"""Fix this HyperFrames scene per the system rules — it failed validation.
+    img_block = _image_guidance(len(image_paths or []), duration)
+    cue_block = _cue_sheet(audio_cues, "hf")
 
+    if error_log and previous_html:
+        # previous_html is the already-inlined file (base64 images) — strip those
+        # back to a marker so the retry prompt doesn't balloon / truncate mid-base64.
+        prev = _strip_data_uris(previous_html)[:6000]
+        return f"""Fix this HyperFrames scene per the system rules — it failed validation.
+{neighbor_block}
 Scene ID: {scene_id}
 Total duration: {duration} seconds
 Narration (spoken, NOT on-screen): {narration}
 Visual description: {visual}
-
+{identity_block}
 PREVIOUS HTML:
 ```html
-{previous_html[:6000]}
+{prev}
 ```
 
 VALIDATION ERROR:
@@ -166,16 +295,16 @@ VALIDATION ERROR:
 
 Fix the error while keeping the scene's content and design intent.
 
-{contract}"""
+{contract}{img_block}{cue_block}"""
 
     return f"""Create a HyperFrames HTML scene per the system rules.
-
+{neighbor_block}
 Scene ID: {scene_id}
 Total duration: {duration} seconds
 Narration (spoken, NOT on-screen): {narration}
 Visual description: {visual}
-
-{contract}"""
+{identity_block}
+{contract}{img_block}{cue_block}"""
 
 
 def _extract_html(text: str) -> str:
@@ -197,13 +326,18 @@ async def _generate_hyperframes(request):
     is_retry = bool(request.error_log and request.previous_code)
     logger.info("Generating HyperFrames HTML", extra={"scene_id": scene_id, "is_retry": is_retry})
 
+    image_paths = request.image_paths or []
     prompt = _build_hf_prompt(
-        scene_id      = scene_id,
-        narration     = scene.narration_text,
-        visual        = scene.visual_description,
-        duration      = scene.estimated_duration_seconds,
-        error_log     = request.error_log,
-        previous_html = request.previous_code,
+        scene_id         = scene_id,
+        narration        = scene.narration_text,
+        visual           = scene.visual_description,
+        duration         = scene.estimated_duration_seconds,
+        error_log        = request.error_log,
+        previous_html    = request.previous_code,
+        image_paths      = image_paths,
+        job_style        = request.job_style,
+        neighbor_context = request.neighbor_context,
+        audio_cues       = request.audio_cues,
     )
 
     last_error = None
@@ -224,6 +358,10 @@ async def _generate_hyperframes(request):
             html = _extract_html(resp.choices[0].message.content)
             if not html:
                 raise ValueError("LLM returned empty HTML")
+            # Inline any __IMAGE_k__ placeholders to base64 data URIs so the
+            # written file is self-contained (renders the same standalone or
+            # inlined into the master composition).
+            html = _inline_images(html, image_paths)
 
             log_llm_call(logger, settings.CODE_GENERATOR_MODEL,
                          prompt_chars=len(prompt),
@@ -294,11 +432,13 @@ _MANIM_FEW_SHOT = (
 )
 
 
-def _build_manim_prompt(scene: object, error_log: str = None, previous_code: str = None) -> str:
+def _build_manim_prompt(scene: object, error_log: str = None, previous_code: str = None,
+                        audio_cues=None) -> str:
     """User-prompt body. Style + forbidden-API rules come from the system
     prompt (manim_rules.md). This message only carries scene-specific values
     and a class-name reminder."""
     sid = scene.scene_id
+    cue_block = _cue_sheet(audio_cues, "manim")
 
     if error_log and previous_code:
         return f"""Fix this Manim CE scene per the system rules — it failed to render.
@@ -313,7 +453,7 @@ ERROR LOG (last 600 chars):
 
 Class name MUST stay `Scene{sid}`. The error often comes from one of the
 forbidden APIs in the system rules — re-check those first.
-
+{cue_block}
 Return ONLY: {{"python_code": "..."}}"""
 
     duration = getattr(scene, "estimated_duration_seconds", 0) or 0
@@ -338,7 +478,7 @@ all run_times + waits to land JUST UNDER {duration}s (about {duration}s minus
 1-2s) — the final frame is held automatically until narration ends, so finishing
 slightly early is correct. Do NOT exceed {duration}s: overshooting pushes the
 video past its narration and breaks the overall timing budget.
-
+{cue_block}
 FEW-SHOT EXAMPLE (valid output for a different scene):
 ```json
 {_MANIM_FEW_SHOT}
@@ -354,7 +494,8 @@ async def _generate_manim(request):
     is_retry = bool(request.error_log and request.previous_code)
     logger.info("Generating Manim code", extra={"scene_id": scene_id, "is_retry": is_retry})
 
-    prompt = _build_manim_prompt(scene, request.error_log, request.previous_code)
+    prompt = _build_manim_prompt(scene, request.error_log, request.previous_code,
+                                 audio_cues=request.audio_cues)
 
     try:
         llm_start = time.time()

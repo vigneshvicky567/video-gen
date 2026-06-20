@@ -68,8 +68,10 @@ _MAX_CONCURRENT: int = int(os.getenv("NIM_MAX_CONCURRENT", "6"))
 _sem: asyncio.Semaphore | None = None  # created lazily on first use (needs running loop)
 
 # Sync fallback for non-async callers (e.g. voiceover Kokoro thread)
+# NVIDIA_RPM is the PER-KEY budget. Requests round-robin across the key pool, so
+# the effective per-process rate is NVIDIA_RPM * n_keys — add keys and throughput
+# scales automatically with no retune. See _min_interval().
 _RPM: int = int(os.getenv("NVIDIA_RPM", "35"))
-_MIN_INTERVAL: float = 60.0 / _RPM
 _rate_lock = threading.Lock()
 _last_request_time: float = 0.0
 
@@ -96,6 +98,17 @@ def _next_key() -> str:
     return key
 
 
+def _min_interval() -> float:
+    """Seconds between request STARTS for this process.
+
+    NVIDIA_RPM is per-key; round-robin spreads requests across the pool, so the
+    process can fire NVIDIA_RPM * n_keys per minute while each key still stays
+    within NVIDIA_RPM (per process). Add keys to NVIDIA_API_KEYS -> faster, no
+    retune. Across N services sharing the same keys, keep NVIDIA_RPM <= 40 / N.
+    """
+    return 60.0 / (_RPM * max(1, len(_api_keys())))
+
+
 def _get_semaphore() -> asyncio.Semaphore:
     """Return (or create) the per-event-loop semaphore."""
     global _sem
@@ -114,7 +127,7 @@ def _acquire_rate_slot_sync() -> None:
     global _last_request_time
     with _rate_lock:
         now = time.monotonic()
-        wait = _MIN_INTERVAL - (now - _last_request_time)
+        wait = _min_interval() - (now - _last_request_time)
         if wait > 0:
             _logger.debug("Rate limiter waiting (sync)", extra={"wait_s": round(wait, 3)})
             time.sleep(wait)
@@ -123,6 +136,32 @@ def _acquire_rate_slot_sync() -> None:
 
 # Keep old name as alias so any existing callers don't break
 _acquire_rate_slot = _acquire_rate_slot_sync
+
+
+# ── Async rate limiter ─────────────────────────────────────────────────────────
+# The semaphore caps *concurrency*, not *rate*. Fast calls (keyword extraction,
+# vision vet, short prompts) return in 1-2s, so 6 concurrent slots churn far past
+# NVIDIA_RPM and trigger 429s. This min-interval gate paces request STARTS to
+# 60/NVIDIA_RPM seconds apart — the async twin of _acquire_rate_slot_sync — so the
+# process holds to its RPM budget regardless of how fast individual calls finish.
+# ponytail: per-process pacing only; for one shared key across N services, set
+# NVIDIA_RPM = account_rpm / N (env), or add keys to NVIDIA_API_KEYS.
+_async_rate_lock: asyncio.Lock | None = None
+_async_last_request_time: float = 0.0
+
+
+async def _acquire_rate_slot_async() -> None:
+    """Non-blocking min-interval pacer for async callers."""
+    global _async_rate_lock, _async_last_request_time
+    if _async_rate_lock is None:
+        _async_rate_lock = asyncio.Lock()
+    async with _async_rate_lock:
+        now = time.monotonic()
+        wait = _min_interval() - (now - _async_last_request_time)
+        if wait > 0:
+            _logger.debug("Rate limiter waiting (async)", extra={"wait_s": round(wait, 3)})
+            await asyncio.sleep(wait)
+        _async_last_request_time = time.monotonic()
 
 
 # ── NIM completions ───────────────────────────────────────────────────────────
@@ -285,9 +324,11 @@ class _NimCompletions:
         sem = _get_semaphore()
         if sem is not None:
             async with sem:
+                await _acquire_rate_slot_async()   # pace starts to NVIDIA_RPM
                 return await asyncio.to_thread(self._do_request, payload)
         else:
             # Fallback: run in thread without semaphore
+            await _acquire_rate_slot_async()
             return await asyncio.to_thread(self._do_request, payload)
 
 

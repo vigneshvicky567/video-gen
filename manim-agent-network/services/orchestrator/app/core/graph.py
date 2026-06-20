@@ -6,7 +6,7 @@ from shared.schemas.requests import (
     ValidatorRequest, VoiceoverRequest, AssemblerRequest,
     ImageFetcherRequest
 )
-from shared.schemas.common import ScenePlan
+from shared.schemas.common import ScenePlan, VISUAL_STYLES, TOPIC_STYLE_MAP
 from shared.timeouts import assembler_http_timeout_s
 import httpx
 import asyncio
@@ -63,9 +63,19 @@ async def script_writer_node(state: LangGraphState):
         return {"status": "failed", "overall_error": error_msg}
 
 
-async def _generate_one_scene(scene: dict, job_id: str, state: LangGraphState) -> tuple:
+async def _generate_one_scene(
+    scene: dict, job_id: str, state: LangGraphState,
+    all_scenes: list, scene_idx: int,
+) -> tuple:
     """Generate code for a single scene. Returns (scene_id, code_path, error)."""
     scene_id = scene["scene_id"]
+
+    # Build neighbor context (1-2 lines each; trimmed to 120 chars for prompt budget)
+    n = len(all_scenes)
+    prev_visual = all_scenes[scene_idx - 1].get("visual_description", "")[:120] if scene_idx > 0 else None
+    next_visual = all_scenes[scene_idx + 1].get("visual_description", "")[:120] if scene_idx < n - 1 else None
+    neighbor_context = {"prev_visual": prev_visual, "next_visual": next_visual}
+
     try:
         request_data = {
             "scene": scene,
@@ -73,6 +83,14 @@ async def _generate_one_scene(scene: dict, job_id: str, state: LangGraphState) -
             "error_log": state.get("error_logs", {}).get(scene_id),
             "previous_code": state.get("previous_code", {}).get(scene_id),
             "render_mode": (state.get("brief") or {}).get("render_mode"),
+            # Pre-fetched stock images for this scene (HF only; empty for Manim).
+            "image_paths": state.get("image_paths", {}).get(scene_id),
+            # Identity + context injected by art_director_node
+            "job_style": state.get("job_style"),
+            "neighbor_context": neighbor_context,
+            # Per-sentence audio cues (voiceover runs before code-gen) so the LLM
+            # times animation beats to the spoken words. Empty if voiceover gave none.
+            "audio_cues": state.get("audio_segments", {}).get(scene_id),
         }
         res = await _post(f"{settings.CODE_GENERATOR_URL}/generate", request_data)
         logger.info(f"[PARALLEL] Code generated for scene {scene_id}: {res['code_path']}")
@@ -80,6 +98,85 @@ async def _generate_one_scene(scene: dict, job_id: str, state: LangGraphState) -
     except Exception as e:
         logger.error(f"[PARALLEL] Code generation failed for scene {scene_id}: {e}")
         return scene_id, None, str(e)
+
+
+async def art_director_node(state: LangGraphState):
+    """Pick one visual style for the whole job — zero LLM calls, pure dict lookup.
+
+    Resolution order:
+    1. Already set (resume-safe skip).
+    2. User picked a style via brief answers (question_id="style").
+    3. Auto-pick from topic_classification in script_meta using TOPIC_STYLE_MAP.
+    4. Fallback: "swiss_pulse".
+    """
+    if state.get("job_style"):
+        logger.info("Art director: style already set (resume)")
+        return {"job_style": state["job_style"]}
+
+    style_key = "swiss_pulse"  # default
+
+    # Check user brief for explicit style answer
+    brief = state.get("brief") or {}
+    if isinstance(brief, dict):
+        answers = brief.get("answers") or []
+        for ans in answers:
+            qid = ans.get("question_id", "") if isinstance(ans, dict) else getattr(ans, "question_id", "")
+            if qid == "style":
+                selected = ans.get("selected", []) if isinstance(ans, dict) else getattr(ans, "selected", [])
+                custom = ans.get("custom_text", "") if isinstance(ans, dict) else getattr(ans, "custom_text", "")
+                raw = (selected[0] if selected else custom or "").lower().replace(" ", "_")
+                if raw in VISUAL_STYLES:
+                    style_key = raw
+                break
+        # Also check direct visual_style field
+        if style_key == "swiss_pulse" and brief.get("visual_style"):
+            raw = brief["visual_style"].lower().replace(" ", "_")
+            if raw in VISUAL_STYLES:
+                style_key = raw
+
+    # Auto-pick from topic classification when no user preference
+    if style_key == "swiss_pulse":
+        topic_class = ""
+        script_meta = state.get("script_meta") or {}
+        if isinstance(script_meta, dict):
+            topic_class = (script_meta.get("topic_classification") or "").lower()
+        if not topic_class:
+            topic_class = (state.get("topic") or "").lower()
+        for keyword, mapped_key in TOPIC_STYLE_MAP:
+            if keyword in topic_class:
+                style_key = mapped_key
+                break
+
+    style = VISUAL_STYLES[style_key].model_dump()
+    logger.info(f"Art director: picked style '{VISUAL_STYLES[style_key].name}' (key={style_key})")
+    return {"job_style": style}
+
+
+async def image_fetcher_node(state: LangGraphState):
+    """Fetch stock images for HyperFrames scenes BEFORE code-gen so each scene can
+    compose its own background imagery (Option B). Manim scenes stay image-free
+    (vector/math). Resume-safe (skips if already fetched) and never fatal — images
+    are an enhancement, so any failure degrades to no-images, not a job failure."""
+    if state.get("image_paths"):
+        return {"image_paths": state["image_paths"], "status": "image_fetch"}
+    try:
+        script = state["script"]
+        job_id = state["job_id"]
+        hf_scenes = [
+            s for s in script["scenes"]
+            if (s.get("content_type") or "").lower() == "hyperframes"
+        ]
+        if not hf_scenes:
+            return {"image_paths": {}, "status": "image_fetch"}
+        img_request = ImageFetcherRequest(job_id=job_id, scenes=hf_scenes)
+        res = await _post(f"{settings.IMAGE_FETCHER_URL}/fetch", img_request.model_dump())
+        image_paths = {int(k): v for k, v in res["image_paths"].items()}
+        got = sum(1 for v in image_paths.values() if v)
+        logger.info(f"Image fetch: {got}/{len(hf_scenes)} HF scenes got images")
+        return {"image_paths": image_paths, "status": "image_fetch"}
+    except Exception as e:
+        logger.error(f"Image fetcher node failed (continuing without images): {e}")
+        return {"image_paths": {}, "status": "image_fetch"}
 
 
 async def code_generator_node(state: LangGraphState):
@@ -107,8 +204,19 @@ async def code_generator_node(state: LangGraphState):
 
         logger.info(f"Generating code for {len(scenes_to_generate)} scenes in parallel...")
 
+        # Build index map so each scene gets its correct position in the full list
+        # (needed for neighbor context — scenes_to_generate may be a subset on retry).
+        all_scenes = script["scenes"]
+        scene_idx_map = {s["scene_id"]: i for i, s in enumerate(all_scenes)}
+
         # Run scenes in parallel, bounded so 30-60 scenes don't swamp code-gen.
-        tasks = [_generate_one_scene(scene, job_id, state) for scene in scenes_to_generate]
+        # Voiceover already ran UPSTREAM (voiceover_node before this node), so each
+        # scene's audio cue sheet is in state.audio_segments and rides into the
+        # code-gen request via _generate_one_scene — the LLM times beats to speech.
+        tasks = [
+            _generate_one_scene(scene, job_id, state, all_scenes, scene_idx_map[scene["scene_id"]])
+            for scene in scenes_to_generate
+        ]
         results = await _bounded_gather(tasks, settings.ORCH_CODEGEN_CONCURRENCY)
 
         for scene_id, code_path, error in results:
@@ -212,7 +320,7 @@ async def validator_node(state: LangGraphState):
         return {"status": "failed", "overall_error": str(e)}
 
 
-def validation_router(state: LangGraphState) -> Literal["code_generator_node", "voiceover_node", "failed"]:
+def validation_router(state: LangGraphState) -> Literal["code_generator_node", "assembler_node", "failed"]:
     if state.get("overall_error") is not None:
         return "failed"
 
@@ -231,29 +339,30 @@ def validation_router(state: LangGraphState) -> Literal["code_generator_node", "
                 needs_retry = True
 
     if all_success:
-        return "voiceover_node"
+        return "assembler_node"
     elif needs_retry:
         return "code_generator_node"
     elif render_paths:
         # Graceful degradation: some scenes exhausted their retries, but at least
         # one rendered. Drop the unrenderable scenes and assemble what we have
-        # instead of failing the entire job. Downstream nodes key off render_paths,
-        # so dropped scenes are naturally excluded from voiceover/timing/assembly.
+        # instead of failing the entire job. Voiceover already ran (pre-code) and
+        # the compositor keys off render_paths, so dropped scenes are excluded.
         failed = sorted(s["scene_id"] for s in script["scenes"] if s["scene_id"] not in render_paths)
         logger.warning(
             f"Proceeding with {len(render_paths)}/{len(script['scenes'])} scenes; "
             f"dropping unrenderable scenes {failed}"
         )
-        return "voiceover_node"
+        return "assembler_node"
     else:
         return "failed"
 
 
 async def _generate_voiceover(scene: dict, job_id: str, existing: dict) -> tuple:
-    """Generate voiceover for a single scene."""
+    """Generate voiceover for one scene. Returns (scene_id, audio_path, segments).
+    segments is the per-sentence cue sheet [{text,start,duration}] or None."""
     scene_id = scene["scene_id"]
     if scene_id in existing:
-        return scene_id, existing[scene_id]
+        return scene_id, existing[scene_id], None  # resume: keep existing audio + state segments
     try:
         req = {
             "job_id": job_id,
@@ -263,85 +372,60 @@ async def _generate_voiceover(scene: dict, job_id: str, existing: dict) -> tuple
         res = await _post(f"{settings.VOICEOVER_URL}/generate", req)
         provider = res.get("provider_used", "unknown")
         fallback = " (fallback)" if res.get("fallback_used") else ""
-        logger.info(f"[PARALLEL] Voiceover done for scene {scene_id}: {provider}{fallback}")
-        return scene_id, res["audio_path"]
+        segs = res.get("segments")
+        logger.info(f"[PARALLEL] Voiceover done for scene {scene_id}: {provider}{fallback} "
+                    f"({len(segs or [])} cues)")
+        return scene_id, res["audio_path"], segs
     except Exception as e:
         logger.error(f"[PARALLEL] Voiceover failed for scene {scene_id}: {e}")
-        return scene_id, None
+        return scene_id, None, None
 
 
-async def voiceover_and_images_node(state: LangGraphState):
-    """Run voiceover and image fetching in parallel — they're independent."""
-    logger.info("Executing Voiceover + Image Fetcher in PARALLEL")
+async def voiceover_node(state: LangGraphState):
+    """Voiceover — runs BEFORE code-gen so each scene's per-sentence cue sheet
+    (audio_segments) is available to time animation beats to the spoken words.
+    Voices ALL scenes (render hasn't happened yet); audio for a scene later
+    dropped by the validator is harmless (the compositor keys off render_paths)."""
+    logger.info("Executing Voiceover Node (PARALLEL, pre-code for A/V sync)")
     try:
         job_id = state["job_id"]
         script = state["script"]
         existing_audio = state.get("audio_paths", {})
+        scenes = script["scenes"]
 
-        # Only process scenes that actually rendered — dropped (unrenderable)
-        # scenes are absent from render_paths and must not get voiceover/images.
-        render_paths = state.get("render_paths", {})
-        survivor_scenes = [s for s in script["scenes"] if s["scene_id"] in render_paths]
+        vo_tasks = [_generate_voiceover(scene, job_id, existing_audio) for scene in scenes]
+        vo_results = await _bounded_gather(vo_tasks, settings.ORCH_VOICEOVER_CONCURRENCY)
 
-        # Voiceover tasks — all surviving scenes in parallel
-        vo_tasks = [_generate_voiceover(scene, job_id, existing_audio) for scene in survivor_scenes]
-
-        # Image fetcher task
-        img_request = ImageFetcherRequest(job_id=job_id, scenes=survivor_scenes)
-        img_task = _post(f"{settings.IMAGE_FETCHER_URL}/fetch", img_request.model_dump())
-
-        # Run both concurrently; voiceover fan-out bounded (CPU-bound TTS).
-        vo_results, img_res = await asyncio.gather(
-            _bounded_gather(vo_tasks, settings.ORCH_VOICEOVER_CONCURRENCY),
-            img_task,
-            return_exceptions=False
-        )
-
-        # Collect ALL voiceover results before deciding failure — a single
-        # transient TTS error must not discard the audio that did succeed.
         new_audio_paths = dict(existing_audio)
+        new_segments = dict(state.get("audio_segments", {}))
         failed_scenes = []
-        for scene_id, audio_path in vo_results:
+        for scene_id, audio_path, segments in vo_results:
             if audio_path:
                 new_audio_paths[scene_id] = audio_path
+                if segments:                       # don't clobber resume-preserved cues
+                    new_segments[scene_id] = segments
             else:
                 failed_scenes.append(scene_id)
 
         if failed_scenes and not new_audio_paths:
-            # Every scene lost its narration — that's a dead TTS service, fail.
             return {
                 "audio_paths": new_audio_paths,
                 "status": "failed",
                 "overall_error": f"Voiceover failed for ALL scenes: {failed_scenes}",
             }
         if failed_scenes:
-            # Graceful degradation: ship the affected scenes without narration
-            # (the compositor times them off the rendered visual instead).
             logger.warning(
                 f"Voiceover failed for scenes {failed_scenes}; "
-                f"continuing with {len(new_audio_paths)}/{len(survivor_scenes)} narrated scenes"
+                f"continuing with {len(new_audio_paths)}/{len(scenes)} narrated scenes"
             )
-
-        # Process image results
-        merged_image_paths = {**state.get("image_paths", {})}
-        for k, v in img_res["image_paths"].items():
-            merged_image_paths[int(k)] = v
-
-        # Persist scenes dropped by the validator's graceful-degradation path so
-        # the assembler and the API response can see which scenes were excluded
-        # (the validation_router can only route, not write state).
-        dropped_scenes = sorted(
-            s["scene_id"] for s in script["scenes"] if s["scene_id"] not in render_paths
-        )
 
         return {
             "audio_paths": new_audio_paths,
-            "image_paths": merged_image_paths,
-            "dropped_scenes": dropped_scenes,
-            "status": "voiceover_and_images"
+            "audio_segments": new_segments,
+            "status": "voiceover",
         }
     except Exception as e:
-        logger.error(f"Voiceover+Images node failed: {e}")
+        logger.error(f"Voiceover node failed: {e}")
         return {"status": "failed", "overall_error": str(e)}
 
 
@@ -355,6 +439,7 @@ async def assembler_node(state: LangGraphState):
             "scene_plans": state["script"]["scenes"],
             "image_paths": state.get("image_paths", {}),
             "script_title": state["script"].get("title", ""),
+            "job_style": state.get("job_style"),
         }
         # Scale the HTTP timeout to the planned output length — a 30-min render
         # legitimately outlasts the default 900s service timeout. Estimate the
@@ -366,11 +451,18 @@ async def assembler_node(state: LangGraphState):
             for s in state["script"]["scenes"]
             if s["scene_id"] in render_paths
         )
+        # Scenes the validator couldn't render are excluded here (compositor keys
+        # off render_paths). Persist the list for the API response — this used to
+        # live in the voiceover node, which now runs pre-render and can't know it.
+        dropped_scenes = sorted(
+            s["scene_id"] for s in state["script"]["scenes"] if s["scene_id"] not in render_paths
+        )
         res = await _post(
             f"{settings.ASSEMBLER_URL}/assemble", req,
             timeout=assembler_http_timeout_s(planned_total),
         )
-        return {"final_output_path": res["final_output_path"], "status": "completed"}
+        return {"final_output_path": res["final_output_path"],
+                "dropped_scenes": dropped_scenes, "status": "completed"}
     except Exception as e:
         logger.error(f"Assembler failed: {e}")
         return {"status": "failed", "overall_error": str(e)}
@@ -404,31 +496,36 @@ def failed_node(state: LangGraphState):
 # Build the Graph
 workflow = StateGraph(LangGraphState)
 
-workflow.add_node("script_writer_node",        script_writer_node)
-workflow.add_node("code_generator_node",       code_generator_node)
-workflow.add_node("validator_node",            validator_node)
-workflow.add_node("voiceover_and_images_node", voiceover_and_images_node)
-workflow.add_node("assembler_node",            assembler_node)
-workflow.add_node("failed",                    failed_node)
+workflow.add_node("script_writer_node",  script_writer_node)
+workflow.add_node("art_director_node",    art_director_node)
+workflow.add_node("voiceover_node",       voiceover_node)
+workflow.add_node("image_fetcher_node",   image_fetcher_node)
+workflow.add_node("code_generator_node",  code_generator_node)
+workflow.add_node("validator_node",       validator_node)
+workflow.add_node("assembler_node",       assembler_node)
+workflow.add_node("failed",               failed_node)
 
+# Pipeline order: script -> art_director (style) -> VOICEOVER (pre-code, so each
+# scene's per-sentence cue sheet feeds code-gen for A/V sync) -> image_fetcher
+# (HF backgrounds) -> code_generator <-> validator (render+retry) -> assembler.
 workflow.add_edge(START, "script_writer_node")
 workflow.add_conditional_edges(
     "script_writer_node",
-    lambda s: "failed" if s.get("overall_error") is not None else "code_generator_node"
+    lambda s: "failed" if s.get("overall_error") is not None else "art_director_node"
 )
+workflow.add_edge("art_director_node", "voiceover_node")
+workflow.add_conditional_edges(
+    "voiceover_node",
+    lambda s: "failed" if s.get("overall_error") else "image_fetcher_node"
+)
+workflow.add_edge("image_fetcher_node", "code_generator_node")
 workflow.add_edge("code_generator_node", "validator_node")
 workflow.add_conditional_edges("validator_node", validation_router,
     {
-        # "voiceover_node" is the router's logical key, not a function — it maps
-        # to the real voiceover_and_images_node target below.
         "code_generator_node": "code_generator_node",
-        "voiceover_node":      "voiceover_and_images_node",
+        "assembler_node":      "assembler_node",
         "failed":              "failed"
     }
-)
-workflow.add_conditional_edges(
-    "voiceover_and_images_node",
-    lambda s: "failed" if s.get("overall_error") else "assembler_node"
 )
 workflow.add_edge("assembler_node", END)
 workflow.add_edge("failed",         END)

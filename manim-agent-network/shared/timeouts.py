@@ -34,13 +34,14 @@ def job_wallclock_timeout_s(target_duration_s: Optional[float]) -> float:
 def chunk_render_timeout_s(chunk_output_s: float) -> int:
     """Per-chunk HyperFrames render budget.
 
-    Software render runs ~5x realtime; budget 7.5x + 300s base, floored at 900s
-    (never below today's effective per-render headroom), capped by config.
+    Measured software (CPU/WebGL) render rate is ~8.4x realtime, so budget 12x +
+    300s base for headroom, floored at 900s, capped by config. (Was 7.5x, which
+    a 341s chunk blew past — render took 48min vs the 48min budget.)
     """
     return int(
         min(
             settings.COMPOSITOR_CHUNK_TIMEOUT_MAX_SECONDS,
-            max(900.0, 300.0 + 7.5 * chunk_output_s),
+            max(900.0, 300.0 + 12.0 * chunk_output_s),
         )
     )
 

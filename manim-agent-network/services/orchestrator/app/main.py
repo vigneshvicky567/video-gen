@@ -262,7 +262,7 @@ async def resume_job(job_id: str, background_tasks: BackgroundTasks):
     # the persisted status is a mid-pipeline running state.
     if job_id in _DRIVING:
         raise HTTPException(status_code=409, detail="Job is already running")
-    if state.get("status") not in ("failed", "completed", "starting", "pending", "code_generation",
+    if state.get("status") not in ("failed", "cancelled", "starting", "pending", "code_generation",
                                    "validation", "voiceover_and_images", "assembly", "script_generation"):
         raise HTTPException(status_code=409, detail=f"Job is {state.get('status')}; cannot resume")
 

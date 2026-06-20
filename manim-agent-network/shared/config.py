@@ -36,9 +36,15 @@ class Settings(BaseSettings):
 
     # ── TTS ───────────────────────────────────────────────────────────────────
     VOICEOVER_PROVIDER: str = os.getenv("VOICEOVER_PROVIDER", "kokoro")  # kokoro
-    # Kokoro is the only TTS provider. On failure the voiceover service retries
-    # Kokoro up to VOICEOVER_MAX_RETRIES times (with backoff) rather than falling
-    # back to a lower-quality engine.
+    # ALL-OFFLINE, ALL-NEURAL fallback chain. Comma-separated, tried in order after
+    # the primary. Default: piper — an independent ONNX neural engine that survives a
+    # kokoro runtime/phonemizer break (different package, different code path). Both
+    # are local, no network. If every provider fails on a scene the orchestrator
+    # degrades gracefully (that scene plays without narration) — no robotic espeak.
+    # edge_tts (cloud) stays implemented but is NOT in the default offline chain.
+    VOICEOVER_FALLBACK_PROVIDER: str = os.getenv("VOICEOVER_FALLBACK_PROVIDER", "piper")
+    EDGE_TTS_VOICE: str = os.getenv("EDGE_TTS_VOICE", "en-US-JennyNeural")
+    PIPER_MODEL_PATH: str = os.getenv("PIPER_MODEL_PATH", "/models/piper/en_US-lessac-medium.onnx")
     VOICEOVER_MAX_RETRIES: int = int(os.getenv("VOICEOVER_MAX_RETRIES", "3"))
     VOICEOVER_RETRY_BACKOFF_SECONDS: float = float(os.getenv("VOICEOVER_RETRY_BACKOFF_SECONDS", "2.0"))
 
@@ -98,6 +104,18 @@ class Settings(BaseSettings):
 
     # ── External API Keys ─────────────────────────────────────────────────────
     PEXELS_API_KEY: str = os.getenv("PEXELS_API_KEY", "")
+    PIXABAY_API_KEY: str = os.getenv("PIXABAY_API_KEY", "")
+
+    # Vision-capable model for the final image-relevance vet (sees the pixels).
+    # Empty -> the vision stage is skipped and SigLIP's ranking is used as-is.
+    # The running services set this via docker-compose (defaulting to
+    # meta/llama-3.2-90b-vision-instruct); the hard default here is empty so the
+    # "empty -> skip" contract holds for any import without an env override.
+    IMAGE_EVAL_MODEL: str = os.getenv("IMAGE_EVAL_MODEL", "")
+
+    # Phase 4: enable vision model keyframe inspection for Manim renders.
+    # Off by default; set VISION_INSPECT_ENABLED=true in .env to activate.
+    VISION_INSPECT_ENABLED: bool = os.getenv("VISION_INSPECT_ENABLED", "false").lower() == "true"
 
 
 settings = Settings()

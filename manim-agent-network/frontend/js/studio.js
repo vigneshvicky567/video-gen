@@ -26,12 +26,12 @@
 
   /* ── developing-track stages (display order) ── */
   const STAGES = [
-    { nm: "Script",   ic: '<path d="M5 4h14M5 9h14M5 14h9"/>',                 keys: ["starting", "pending", "script_generation"] },
-    { nm: "Code",     ic: '<path d="M8 6l-4 6 4 6M16 6l4 6-4 6"/>',           keys: ["code_generation"] },
-    { nm: "Validate", ic: '<path d="M5 12l4 4L19 6"/>',                        keys: ["validation"] },
-    { nm: "Voice",    ic: '<path d="M12 4v16M7 9v6M17 9v6"/>',                 keys: ["voiceover", "voiceover_and_images"] },
-    { nm: "Assemble", ic: '<path d="M4 7h7v7H4zM13 10h7v7h-7z"/>',            keys: ["assembly"] },
-    { nm: "Film",     ic: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/>', keys: ["completed"] },
+    { nm: "Story",  ic: '<path d="M5 4h14M5 9h14M5 14h9"/>',                 keys: ["starting", "pending", "script_generation"] },
+    { nm: "Create", ic: '<path d="M8 6l-4 6 4 6M16 6l4 6-4 6"/>',           keys: ["code_generation"] },
+    { nm: "Render", ic: '<path d="M5 12l4 4L19 6"/>',                        keys: ["validation"] },
+    { nm: "Voice",  ic: '<path d="M12 4v16M7 9v6M17 9v6"/>',                 keys: ["voiceover", "voiceover_and_images"] },
+    { nm: "Finish", ic: '<path d="M4 7h7v7H4zM13 10h7v7h-7z"/>',            keys: ["assembly"] },
+    { nm: "Done",   ic: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/>', keys: ["completed"] },
   ];
 
   /* ── state ── */
@@ -44,12 +44,28 @@
   let lastJobsSig = "", lastHealthSig = "";
   let setupOpen = false;
 
+  /* library/history view state */
+  let libQuery = "", libFilter = "all";
+  const LIB_FILTERS = [["all", "All"], ["completed", "Ready"], ["running", "Rendering"], ["failed", "Failed"]];
+
   /* setup/analyze working state */
   let analyzer = null, setupAns = {}, setupPrompt = "", setupBusy = false;
 
   /* render engine for the NEXT job: "hybrid" (per-scene auto), "manim", "hyperframes" */
   let renderMode = "hybrid";
-  const RENDER_MODES = [["hybrid", "Hybrid"], ["manim", "Manim"], ["hyperframes", "HyperFrames"]];
+  const RENDER_MODES = [["hybrid", "Auto"], ["manim", "Classic"], ["hyperframes", "Visual"]];
+  /* Visual templates — mirror shared/schemas/common.py VISUAL_STYLES. The picker
+     sends the KEY as visual_style; art_director_node matches it. Keep in sync. */
+  const STYLES = [
+    { k: "swiss_pulse",     n: "Swiss Pulse",     bg: "#f5f5f0", fg: "#1a1a1a", ac: "#e63946", v: "Grid precision · clean cuts" },
+    { k: "velvet_standard", n: "Velvet Standard", bg: "#1a0a2e", fg: "#f0e6ff", ac: "#b388ff", v: "Slow luxury · blur crossfades" },
+    { k: "deconstructed",   n: "Deconstructed",   bg: "#0d0d0d", fg: "#f0f0f0", ac: "#ff6b00", v: "Fragmented · asymmetric" },
+    { k: "maximalist_type", n: "Maximalist Type", bg: "#fffbe6", fg: "#1a1a00", ac: "#ffcc00", v: "Bold weight · scale surprises" },
+    { k: "data_drift",      n: "Data Drift",      bg: "#0a0f1c", fg: "#e8f4fd", ac: "#00d4ff", v: "Analytical · chart reveals" },
+    { k: "soft_signal",     n: "Soft Signal",     bg: "#f7f0e8", fg: "#2d2820", ac: "#7ec8a4", v: "Organic · gentle drift" },
+    { k: "folk_frequency",  n: "Folk Frequency",  bg: "#2d1b0e", fg: "#f5e6d3", ac: "#e8a87c", v: "Handcrafted · warm texture" },
+    { k: "shadow_cut",      n: "Shadow Cut",      bg: "#121212", fg: "#ffffff", ac: "#ff3366", v: "Cinematic · hard cuts" },
+  ];
 
   /* ── utils ── */
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -74,10 +90,10 @@
     "validation", "voiceover", "voiceover_and_images", "assembly"]);
   function chipText(s) {
     return ({
-      starting: "summoning", pending: "summoning", script_generation: "writing script",
-      code_generation: "writing code", validation: "validating", voiceover: "narrating",
-      voiceover_and_images: "narrating", assembly: "assembling",
-      completed: "ready", failed: "failed",
+      starting: "starting", pending: "starting", script_generation: "writing story",
+      code_generation: "creating scenes", validation: "rendering", voiceover: "adding voice",
+      voiceover_and_images: "adding voice", assembly: "finishing up",
+      completed: "ready", failed: "failed", cancelled: "stopped",
     })[s] || s || "unknown";
   }
   function curStageIdx(status) {
@@ -95,13 +111,15 @@
     };
   }
   function failStageIdx(state) {
+    // Returns the stage INDEX where the job was working when it stopped.
+    // Each check: "this data exists → pipeline got past the preceding stage → failed HERE."
     const c = counts(state);
-    let idx = 0;
-    if (c.coded) idx = 1;
-    if (c.rendered) idx = 2;
-    if (c.voiced) idx = 3;
-    if (state.final_output_path) idx = 4;
-    return idx;
+    if (state.final_output_path) return 4; // audio + renders + film path → died in assembly
+    if (c.voiced) return 4;    // audio done, no final_output → assembly fault
+    if (c.rendered) return 3;  // renders done, no audio → voice fault
+    if (c.coded) return 2;     // code written, nothing rendered → validation fault
+    if (state.script) return 1; // screenplay exists, nothing coded → code-gen fault
+    return 0;                  // no script at all → script-writer fault
   }
   function pipelineFraction(state) {
     if (state.status === "completed") return 1;
@@ -145,7 +163,7 @@
     const tab = (v, label) => `<button class="${view === v ? "on" : ""}" data-v="${v}">${label}</button>`;
     return `<div class="marquee">
       <div class="logo"><a href="index.html"><img class="logo-mark" src="assets/kinetic-mark.png" alt=""/><span class="m">Kinetic <i>Studios</i></span><span class="sub">idea → film</span></a></div>
-      <div class="switch">${tab("home", "Home")}${tab("cut", "The cut")}${tab("lab", "The lab")}</div>
+      <div class="switch">${tab("home", "Home")}${tab("library", "Library")}${tab("cut", "The cut")}${tab("lab", "The lab")}</div>
       <div class="right">
         <div class="pool" id="pool"><span class="t">render pool</span>${dots}</div>
         <span class="clock" id="clock">${fmtClock(new Date())}</span>
@@ -175,11 +193,12 @@
   function drawerItems() {
     if (!jobs.length) return `<p class="cs-empty">No films yet.<br/>The swarm awaits its first command.</p>`;
     return jobs.map((f) => {
-      const kind = f.status === "completed" ? "ready" : f.status === "failed" ? "fail" : "render";
-      const badge = f.status === "completed" ? "Ready" : f.status === "failed" ? "Failed" : "Rendering";
+      const kind = f.status === "completed" ? "ready" : (f.status === "failed" || f.status === "cancelled") ? "fail" : "render";
+      const badge = f.status === "completed" ? "Ready" : f.status === "failed" ? "Failed" : f.status === "cancelled" ? "Stopped" : "Rendering";
       const meta = `${chipText(f.status)} · ${timeAgo(parseUtc(f.created_at))}`;
-      const retry = f.status === "failed"
-        ? `<button class="cs-retry" data-retry="${f.job_id}" title="Resume this job">↻ Retry</button>` : "";
+      const stoppable = f.status === "failed" || f.status === "cancelled";
+      const retry = stoppable
+        ? `<button class="cs-retry" data-retry="${f.job_id}" title="Resume this job">↻ ${f.status === "cancelled" ? "Continue" : "Retry"}</button>` : "";
       return `<div class="cs ${f.job_id === selectedId ? "on" : ""}" data-id="${f.job_id}">
         <div class="ti">${esc(f.topic)}</div>
         <div class="ti-meta">${esc(meta)}</div>
@@ -254,7 +273,9 @@
       <div class="hero-compose">
         <svg class="plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
         <input id="home-input" maxlength="300" placeholder="A concept to explain — e.g. how a hash map handles collisions"/>
-        <span class="model">Standard <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></span>
+        <select class="model" id="home-mode" title="Render engine for the next film">
+          ${RENDER_MODES.map(([v, l]) => `<option value="${v}" ${renderMode === v ? "selected" : ""}>${l}</option>`).join("")}
+        </select>
         <button class="roll" id="home-roll" aria-label="Set up the shot"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0a0b0e" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
       </div>
       <div class="starters">
@@ -263,6 +284,73 @@
       </div>
       <div class="home-foot">8 scenes · 1080p · narrated · captions baked in</div>
     </div>${overlaysNoSlate()}`;
+  }
+
+  /* ════════ LIBRARY (history of every film) ════════ */
+  function libFiltered() {
+    const q = libQuery.trim().toLowerCase();
+    return jobs.filter((j) => {
+      if (libFilter === "completed" && j.status !== "completed") return false;
+      if (libFilter === "failed" && j.status !== "failed") return false;
+      if (libFilter === "running" && !RUNNING.has(j.status)) return false;
+      if (q && !String(j.topic || "").toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }
+  function libCards() {
+    const list = libFiltered().slice().sort((a, b) => {
+      const rank = (s) => s === "failed" || s === "cancelled" ? 2 : s === "completed" ? 0 : 1;
+      return rank(a.status) - rank(b.status);
+    });
+    if (!list.length) {
+      return `<p class="lib-empty">No films ${libQuery ? "match that search" : "here yet"}.<br/>Describe an idea to shoot one.</p>`;
+    }
+    return list.map((f) => {
+      const done = f.status === "completed", failed = f.status === "failed" || f.status === "cancelled";
+      const kind = done ? "ready" : failed ? "fail" : "render";
+      const badge = done ? "Ready" : f.status === "failed" ? "Failed" : f.status === "cancelled" ? "Stopped" : chipText(f.status);
+      const when = timeAgo(parseUtc(f.created_at));
+      // Thumbnail = the finished film's own first frame (no separate poster
+      // endpoint). preload=metadata fetches only headers + the seek frame.
+      const thumb = done
+        ? `<video class="lib-thumb" src="/video/${f.job_id}#t=1" preload="metadata" muted playsinline></video>`
+        : `<div class="lib-thumb ph ${kind}">${failed ? "⚠" : ""}</div>`;
+      return `<article class="lib-card ${kind}" data-id="${f.job_id}" tabindex="0" title="${esc(f.topic)}">
+        <div class="lib-pic">${thumb}<span class="lib-badge ${kind}">${esc(badge)}</span></div>
+        <div class="lib-body">
+          <div class="lib-ti">${esc(f.topic || "Untitled")}</div>
+          <div class="lib-meta"><span class="lib-chan">Kinetic Studios</span> · ${esc(when)}</div>
+        </div>
+      </article>`;
+    }).join("");
+  }
+  function libraryShell() {
+    return `${marquee()}
+    <div class="library">
+      <div class="lib-head">
+        <div class="lib-title">
+          <h1>Your films</h1>
+          <p class="lib-sub">Every explainer the swarm has shot · <span>${jobs.length}</span> total</p>
+        </div>
+        <button class="lib-new" id="lib-new"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#0a0b0e" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Create film</button>
+      </div>
+      <div class="lib-bar">
+        <div class="lib-filters" id="lib-filters">
+          ${LIB_FILTERS.map(([f, l]) => `<button class="lib-f ${libFilter === f ? "on" : ""}" data-f="${f}">${l}</button>`).join("")}
+        </div>
+        <div class="lib-searchwrap">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+          <input class="lib-search" id="lib-search" placeholder="Search your films…" value="${esc(libQuery)}"/>
+        </div>
+      </div>
+      <div class="lib-grid" id="lib-grid">${libCards()}</div>
+    </div>${overlaysNoSlate()}`;
+  }
+  function bindLibCards() {
+    document.getElementById("lib-grid")?.querySelectorAll(".lib-card[data-id]").forEach((el) => {
+      el.onclick = () => selectJob(el.dataset.id);
+      el.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); selectJob(el.dataset.id); } };
+    });
   }
 
   /* ════════ THE CUT (completed) ════════ */
@@ -277,6 +365,12 @@
     const runtime = st.script?.scenes?.reduce((a, s) => a + (s.estimated_duration_seconds || 0), 0) || 0;
     const cap = st.script?.title || st.topic || "";
     const scenes = st.script?.scenes || [];
+    const titles = scenes.map((s) => s.title).filter(Boolean);
+    const chapters = titles.join("  →  ");
+    const descText = `A ${fmtDur(runtime)} explainer on ${st.topic || cap}, told across ${c.scenes} scene${c.scenes === 1 ? "" : "s"}.` +
+      (chapters ? `\n\nChapters:  ${chapters}` : "") +
+      `\n\nFully narrated end to end, captions baked in, rendered at 1080p.` +
+      (c.retries ? ` ${c.retries} render hiccup${c.retries > 1 ? "s were" : " was"} caught and auto-healed during production.` : "");
     return `${marquee()}
     <div class="canvas">
       <div class="proj">
@@ -285,14 +379,32 @@
             <div class="meta-eyebrow"><span class="live"></span>Ready to watch · final cut</div>
             <h1>${esc(st.topic || "Untitled")}</h1>
           </div>
-          <div class="facts">
-            <b>≈ ${fmtDur(runtime)}</b> runtime<br><b>${c.scenes}</b> scenes · 1080p<br><b>${c.retries}</b> retries auto-healed
-          </div>
         </div>
         <div class="screen" id="screen">${filmPlayerHtml(`/video/${selectedId}`)}</div>
-        <div class="canister">
-          <a class="dl" id="film-dl" href="/video/${selectedId}" download><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0a0b0e" stroke-width="2.2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>Download film</a>
-          <div class="fmt"><b>1080p</b> MP4 · <b>captions</b> baked in · <b>Kokoro</b> voice</div>
+      </div>
+
+      <div class="ytinfo">
+        <div class="yt-desc" id="yt-desc">
+          <div class="yt-stats">${c.scenes} scenes · ≈ ${fmtDur(runtime)} · 1080p MP4 · captions baked in · Kokoro voice · ${c.retries} retries auto-healed</div>
+          <div class="yt-body">${esc(descText)}</div>
+          <button class="yt-more" id="yt-more">…more</button>
+        </div>
+        <div class="yt-bar">
+          <div class="yt-left">
+            <div class="yt-chan">
+              <img class="yt-ava" src="assets/kinetic-mark.png" alt=""/>
+              <div><div class="yt-name">Kinetic Studios</div>
+                <div class="yt-sub">AI film · ${c.scenes} scenes · ≈ ${fmtDur(runtime)}</div></div>
+            </div>
+            <div class="canister">
+              <a class="dl" id="film-dl" href="/video/${selectedId}" download><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0a0b0e" stroke-width="2.2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>Download film</a>
+              <div class="fmt"><b>1080p</b> MP4 · <b>captions</b> baked in · <b>Kokoro</b> voice</div>
+            </div>
+          </div>
+          <div class="yt-acts">
+            <button class="yt-btn" id="film-copy"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v14"/></svg><span class="lbl">Copy link</span></button>
+            <button class="yt-btn" id="film-new"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg><span class="lbl">New cut</span></button>
+          </div>
         </div>
       </div>
 
@@ -438,26 +550,28 @@
     const state = sceneState(sid, st);
     const type = (s.content_type || "manim").toLowerCase();
     const anim = type === "manim";
-    const title = s.title || (s.visual_description || "").slice(0, 80) || `Scene ${sid}`;
-    return `<div class="frame" data-st="${state}" data-id="${sid}" data-title="${esc(s.title || ("Scene " + sid))}" style="--i:${i || 0}">
+    const title = s.title || `Scene ${sid}`;
+    const desc = (s.visual_description || s.narration_text || "").trim();
+    return `<div class="frame" data-st="${state}" data-id="${sid}" data-dur="${s.estimated_duration_seconds || 0}" style="--i:${i || 0}" title="Jump to this scene in the film">
       <div class="pic">
         <span class="n">SC ${sid.padStart(2, "0")}</span>
-        <span class="eng ${anim ? "e-anim" : "e-frame"}">${anim ? "animated" : "frames"}</span>
-        <div class="mini"><svg width="9" height="11" viewBox="0 0 10 12" fill="#ece7da"><path d="M0 0l10 6-10 6z"/></svg></div>
       </div>
-      <div class="cap2"><div class="ti">${esc(title)}</div>
-        <div class="fr"><span class="ok">${SCENE_LABEL[state]}</span><span class="du">${s.estimated_duration_seconds ?? "–"}s</span></div></div>
+      <div class="cap2">
+        <div class="ti">${esc(title)}</div>
+        ${desc ? `<div class="desc">${esc(desc)}</div>` : ""}
+        <div class="fr"><span class="ok">${SCENE_LABEL[state]}</span><span class="du">${s.estimated_duration_seconds ?? "–"}s</span></div>
+      </div>
     </div>`;
   }
 
   function synthCutLog(st) {
     const c = counts(st);
     const rows = [
-      ["director", `final cut assembled — <b>ready to watch</b>`, "good"],
-      ["narrator", `voice track synced across ${c.scenes} scenes`, ""],
-      c.retries ? ["validator", `${c.retries} frame error${c.retries > 1 ? "s" : ""} caught and <b>healed</b>`, "bad"] : null,
-      ["camera", `${c.rendered} of ${c.scenes} scenes developed`, ""],
-      ["script-writer", `screenplay: “${esc(st.script?.title || st.topic || "")}”`, ""],
+      ["director", `film ready — <b>enjoy watching</b>`, "good"],
+      ["narrator", `voice added across ${c.scenes} scenes`, ""],
+      c.retries ? ["renderer", `${c.retries} scene${c.retries > 1 ? "s" : ""} had issues and were <b>auto-fixed</b>`, "bad"] : null,
+      ["renderer", `${c.rendered} of ${c.scenes} scenes completed`, ""],
+      ["writer", `story: "${esc(st.script?.title || st.topic || "")}"`, ""],
     ].filter(Boolean);
     return rows.map(([who, ms, tone], i) =>
       `<div class="ln ${tone}"><span class="tm">${String(i).padStart(2, "0")}:00</span><span class="who">${who}</span><span class="ms">${ms}</span></div>`
@@ -481,55 +595,58 @@
   // omitted, fall back to even spacing (used before lanes are measured).
   function railSvg(n, dir, ys) {
     if (!n) return "";
-    const Hn = 1000, mid = Hn / 2, paths = [], dots = [];
+    const Hn = 1000, mid = Hn / 2, paths = [], beads = [];
     const grad = dir === "fan" ? "url(#gFan)" : "url(#gMerge)";
     const dotCol = dir === "fan" ? "var(--teal)" : "var(--amber)";
     for (let i = 0; i < n; i++) {
       const frac = ys && ys[i] != null ? ys[i] : (i + 0.5) / n;
       const y = frac * Hn;
-      // long, gentle control points → the sweeping splay in the img
       const d = dir === "fan"
         ? `M2,${mid} C46,${mid} 54,${y} 98,${y}`
         : `M2,${y} C46,${y} 54,${mid} 98,${mid}`;
-      const id = `${dir}-${i}`;
-      paths.push(`<path id="rp-${id}" d="${d}" fill="none" stroke="${grad}" stroke-width="2" stroke-linecap="round" class="rail-line" style="--d:${(i * 0.22).toFixed(2)}s" vector-effect="non-scaling-stroke"/>`);
-      dots.push(`<circle r="3.4" fill="${dotCol}" class="rail-dot">
-        <animateMotion dur="${(2.4 + (i % 3) * 0.4).toFixed(1)}s" repeatCount="indefinite" begin="${(i * 0.18).toFixed(2)}s"
-          keyPoints="${dir === "fan" ? "0;1" : "0;1"}" keyTimes="0;1" calcMode="spline" keySplines="0.4 0 0.2 1">
-          <mpath href="#rp-${id}"/></animateMotion></circle>`);
+      paths.push(`<path d="${d}" fill="none" stroke="${grad}" stroke-width="1.8" stroke-linecap="round" class="rail-line" style="--d:${(i * 0.22).toFixed(2)}s" vector-effect="non-scaling-stroke"/>`);
+      beads.push(
+        `<path d="${d}" fill="none" stroke="${dotCol}" stroke-width="2.5" stroke-linecap="round"` +
+        ` stroke-dasharray="5 170" class="rail-packet" vector-effect="non-scaling-stroke"` +
+        ` style="animation-delay:${(i * 0.32).toFixed(2)}s;filter:drop-shadow(0 0 5px ${dotCol})"/>`
+      );
     }
     return `<svg viewBox="0 0 100 ${Hn}" preserveAspectRatio="none" width="100%" height="100%">
       <defs>
         <linearGradient id="gFan" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="var(--signal)"/><stop offset="1" stop-color="var(--teal)"/></linearGradient>
         <linearGradient id="gMerge" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="var(--teal)"/><stop offset="1" stop-color="var(--amber)"/></linearGradient>
-      </defs>${paths.join("")}${dots.join("")}</svg>`;
+      </defs>${paths.join("")}${beads.join("")}</svg>`;
   }
   // per-scene pip states across [code, validate, voice]
   function lanePips(sid, st, running) {
     const has = (o) => o && (sid in o);
-    // map per stage key (lane order = code · voice · validate)
     const map = { code: has(st.code_paths), voice: has(st.audio_paths), validate: has(st.render_paths) };
     const done = LANE_STAGES.map((g) => map[g.key]);
-    const err = has(st.error_logs) && st.status !== "completed";
+    const hasErr = has(st.error_logs);
+    // "retry" = job still running but scene had an error → auto-healing (amber pulse)
+    // "fail"  = job stopped AND scene has an error → permanent fault (red)
+    const retrying = hasErr && running;
+    const permFail = hasErr && !running;
     const firstOpen = done.indexOf(false);
     const states = done.map((d, j) => {
       if (d) return "done";
-      if (err && j === firstOpen) return "fail";
-      if (running && !err && j === firstOpen) return "cur";
+      if (permFail && j === firstOpen) return "fail";
+      if (retrying && j === firstOpen) return "retry";
+      if (running && j === firstOpen) return "cur";
       return "wait";
     });
     let word = SCENE_LABEL[sceneState(String(sid), st)] || "queued";
-    if (map.code && !map.voice && running && !err) word = "narrating";
+    if (retrying) word = "healing";
+    else if (map.code && !map.voice && running && !hasErr) word = "narrating";
     if (map.code && map.voice && map.validate) word = "developed";
-    return { states, word, err, allDone: done.every(Boolean) };
+    return { states, word, err: permFail, retrying, allDone: done.every(Boolean) };
   }
-  // The three per-scene stages, in true pipeline order: generate code →
-  // render/validate → narrate. Each carries the matching STAGES icon so a lane
-  // pip reads as a node (img2), not a bar (img1). Column headers use these labels.
+  // Per-scene stages in true pipeline order: generate code → render/validate → narrate.
+  // "validate" key maps to render_paths (a scene is "validated" by a successful render).
   const LANE_STAGES = [
-    { key: "code",     label: "CODE",     ic: STAGES[1].ic },
-    { key: "voice",    label: "VOICE",    ic: STAGES[3].ic },
-    { key: "validate", label: "VALIDATE", ic: STAGES[2].ic },
+    { key: "code",     label: "CODE",   ic: STAGES[1].ic },
+    { key: "validate", label: "RENDER", ic: STAGES[2].ic },
+    { key: "voice",    label: "VOICE",  ic: STAGES[3].ic },
   ];
   function pipNode(g) {
     return `<span class="pip ${g.key}">
@@ -601,6 +718,41 @@
     rm.innerHTML = railSvg(n, "merge", ys);
   }
 
+  /* ── error helpers ── */
+  function parseErrorSummary(err) {
+    if (!err) return "";
+    const lines = err.split("\n").map((l) => l.trim()).filter(Boolean);
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const l = lines[i];
+      if (!l.startsWith("File ") && !l.startsWith("During handling") && !l.startsWith("The above") && l.length < 300)
+        return l;
+    }
+    return (lines[0] || err).slice(0, 200);
+  }
+  function buildErrDetail(st) {
+    const c = counts(st);
+    const scenes = st.script?.scenes || [];
+    const errs = st.error_logs || {};
+    const retries = st.retry_counts || {};
+    const sceneHtml = Object.entries(errs).map(([sid, errText]) => {
+      const sc = scenes.find((s) => String(s.scene_id) === String(sid));
+      const name = sc?.title ? `SC ${String(sid).padStart(2, "0")} "${esc(sc.title)}"` : `SC ${String(sid).padStart(2, "0")}`;
+      const tries = retries[sid] || 0;
+      const summary = parseErrorSummary(errText);
+      return `<div class="errbar-scene">
+        <span class="es-name">${name}</span>
+        <span class="es-attempt">${tries}/5 tries</span>
+        ${summary ? `<span class="es-msg" title="${esc(summary)}">${esc(summary)}</span>` : ""}
+      </div>`;
+    }).join("");
+    const notes = [];
+    if (c.rendered > 0) notes.push(`keeps ${c.rendered} existing render${c.rendered !== 1 ? "s" : ""}`);
+    if (c.coded > 0) notes.push(`reuses ${c.coded} code file${c.coded !== 1 ? "s" : ""}`);
+    notes.push(`re-voices all ${c.scenes || "?"} scenes`);
+    const note = `<div class="errbar-resume-note">↻ Resume: ${notes.join(" · ")}</div>`;
+    return sceneHtml + note;
+  }
+
   /* ════════ THE LAB (running / failed) ════════ */
   function labShell() {
     if (!jobState) {
@@ -610,7 +762,7 @@
       </div></div>${overlays()}`;
     }
     const st = jobState;
-    const failed = st.status === "failed";
+    const failed = st.status === "failed" || st.status === "cancelled";
     const created = createdMs ? new Date(createdMs).toLocaleString() : "—";
     return `${marquee()}
     <div class="canvas">
@@ -631,18 +783,18 @@
         <!-- fan-out: Script splits into N parallel scene agents, then converges into Assemble → Film -->
         <div class="fanout" id="fanout">
           <div class="cap-col">
-            ${capNode("script", STAGES[0].ic, "Script", "splits prompt → N scenes")}
+            ${capNode("script", STAGES[0].ic, "Story", "develops the screenplay")}
           </div>
           <div class="rail" id="rail-fan" aria-hidden="true"></div>
           <div class="band-wrap">
-            <div class="band-lbl"><span id="band-ct">Parallel scene agents</span>
-              <span class="band-sub">one independent agent per scene · stages 2–4</span></div>
+            <div class="band-lbl"><span id="band-ct">Scenes in progress</span>
+              <span class="band-sub">each scene developed independently</span></div>
             <div class="band" id="scene-band"><div class="band-hint">waiting for scene breakdown…</div></div>
           </div>
           <div class="rail" id="rail-merge" aria-hidden="true"></div>
           <div class="cap-col converge">
-            ${capNode("assemble", STAGES[4].ic, "Assemble", "stitch + caption")}
-            ${capNode("film", STAGES[5].ic, "Film", "signed URL")}
+            ${capNode("assemble", STAGES[4].ic, "Finish", "puts it all together")}
+            ${capNode("film", STAGES[5].ic, "Done", "your film is ready")}
           </div>
         </div>
 
@@ -655,10 +807,12 @@
       </div>
 
       <div class="errbar" id="errbar" ${failed && st.overall_error ? "" : "hidden"}>
-        <div class="errbar-head"><b>Pipeline fault</b>
-          <button class="retry-btn" id="retry-btn">↻ Retry — resume from where it stopped</button>
+        <div class="errbar-head">
+          <div><b id="errbar-label">${st.status === "cancelled" ? "Stopped by user" : "Pipeline fault"}</b><span class="errbar-sum" id="errbar-sum">${esc(parseErrorSummary(st.overall_error || ""))}</span></div>
+          <button class="retry-btn" id="retry-btn">↻ ${st.status === "cancelled" ? "Continue" : "Resume pipeline"}</button>
         </div>
-        <pre id="err-text">${esc(st.overall_error || "")}</pre>
+        <div class="errbar-body" id="errbar-detail"></div>
+        <details class="errbar-raw"><summary>full trace</summary><pre id="err-text">${esc(st.overall_error || "")}</pre></details>
       </div>
 
       <div class="log">
@@ -671,7 +825,7 @@
   function patchLab() {
     if (!jobState) return;
     const st = jobState, c = counts(st);
-    const failed = st.status === "failed";
+    const failed = st.status === "failed" || st.status === "cancelled";
     const cur = failed ? failStageIdx(st) : curStageIdx(st.status);
 
     // ── fan-out: endpoint caps + parallel scene band ──
@@ -709,18 +863,18 @@
           const states = members.map((m) => m.states[j]);
           const agg = states.every((s) => s === "done") ? "done"
             : states.includes("fail") ? "fail"
+            : states.includes("retry") ? "retry"
             : states.includes("cur") ? "cur" : "wait";
           const pip = lane.querySelector(`.pip.${g.key}`);
           if (pip) pip.className = `pip ${g.key} ${agg}`;
         });
         const allDone = members.every((m) => m.allDone);
-        const anyErr = members.some((m) => m.err);
-        lane.className = "lane" + (allDone ? " done" : anyErr ? " fail" : running ? " live" : "");
+        const anyPermFail = members.some((m) => m.err);       // permanent fail only
+        const anyRetrying = members.some((m) => m.retrying);  // auto-healing
+        lane.className = "lane" + (allDone ? " done" : anyPermFail ? " fail" : (anyRetrying || running) ? " live" : "");
       });
       const bs = document.querySelector(".band-sub");
-      const lbl = scenes.length > MAX_LANES
-        ? `${validated}/${scenes.length} developed · ${groups.length} agent groups`
-        : `${validated}/${scenes.length} developed · one agent per scene`;
+      const lbl = `${validated}/${scenes.length} scenes ready`;
       if (bs) bs.textContent = lbl;
     }
     const tct = document.getElementById("track-ct");
@@ -746,7 +900,18 @@
 
     // error
     const eb = document.getElementById("errbar");
-    if (eb) { const show = failed && st.overall_error; eb.hidden = !show; if (show) setText("err-text", st.overall_error); }
+    if (eb) {
+      const show = failed && st.overall_error;
+      eb.hidden = !show;
+      if (show) {
+        setText("err-text", st.overall_error);
+        setText("errbar-sum", parseErrorSummary(st.overall_error));
+        const det = document.getElementById("errbar-detail");
+        if (det) det.innerHTML = buildErrDetail(st);
+        const rb = document.getElementById("retry-btn");
+        if (rb && !rb.disabled) rb.textContent = `↻ ${st.status === "cancelled" ? "Continue" : "Resume pipeline"}`;
+      }
+    }
 
     // log
     diffToFeed(prevState, st);
@@ -768,23 +933,23 @@
     ).join("");
   }
   function diffToFeed(prev, cur) {
-    const name = (sid) => { const sc = cur.script?.scenes?.find((s) => String(s.scene_id) === String(sid)); return sc?.title ? `scene ${sid} “${esc(sc.title)}”` : `scene ${sid}`; };
+    const name = (sid) => { const sc = cur.script?.scenes?.find((s) => String(s.scene_id) === String(sid)); return sc?.title ? `scene ${sid} "${esc(sc.title)}"` : `scene ${sid}`; };
     if (!prev) { pushFeed("director", `tracking transmission · ${chipText(cur.status)}`); return; }
     if (prev.status !== cur.status) {
       const tone = cur.status === "failed" ? "bad" : cur.status === "completed" ? "good" : "";
       pushFeed("director", `phase → <b>${chipText(cur.status)}</b>`, tone);
     }
     if (!prev.script && cur.script)
-      pushFeed("script-writer", `screenplay ready — ${cur.script.scenes?.length ?? 0} scenes: “${esc(cur.script.title || "")}”`, "good");
+      pushFeed("script-writer", `screenplay ready — ${cur.script.scenes?.length ?? 0} scenes: "${esc(cur.script.title || "")}"`, "good");
     const fresh = (a, b) => Object.keys(b || {}).filter((k) => !(k in (a || {})));
-    for (const k of fresh(prev.code_paths, cur.code_paths)) pushFeed("coder", `${name(k)} — animation written`);
-    for (const k of fresh(prev.render_paths, cur.render_paths)) pushFeed("validator", `${name(k)} — <b>developed ✓</b>`, "good");
-    for (const k of fresh(prev.audio_paths, cur.audio_paths)) pushFeed("narrator", `${name(k)} — narration recorded`);
-    for (const k of fresh(prev.image_paths, cur.image_paths)) pushFeed("camera", `${name(k)} — visuals fetched`);
-    for (const [k, v] of Object.entries(cur.retry_counts || {})) { const was = (prev.retry_counts || {})[k] || 0; if (v > was) pushFeed("coder", `${name(k)} — retry #${v}, <b>healing</b>`, "bad"); }
-    for (const k of fresh(prev.error_logs, cur.error_logs)) pushFeed("validator", `${name(k)} — fault captured, sent back`, "bad");
-    if (!prev.final_output_path && cur.final_output_path) pushFeed("assembler", "final cut stitched + encoded ✓", "good");
-    if (cur.status === "failed" && prev.status !== "failed") pushFeed("director", esc(cur.overall_error || "pipeline failed"), "bad");
+    for (const k of fresh(prev.code_paths, cur.code_paths)) pushFeed("creator", `${name(k)} — scene created`);
+    for (const k of fresh(prev.render_paths, cur.render_paths)) pushFeed("renderer", `${name(k)} — <b>rendered ✓</b>`, "good");
+    for (const k of fresh(prev.audio_paths, cur.audio_paths)) pushFeed("narrator", `${name(k)} — voice recorded`);
+    for (const k of fresh(prev.image_paths, cur.image_paths)) pushFeed("camera", `${name(k)} — images ready`);
+    for (const [k, v] of Object.entries(cur.retry_counts || {})) { const was = (prev.retry_counts || {})[k] || 0; if (v > was) pushFeed("renderer", `${name(k)} — retrying (attempt ${v})`, "bad"); }
+    for (const k of fresh(prev.error_logs, cur.error_logs)) pushFeed("renderer", `${name(k)} — issue found, retrying`, "bad");
+    if (!prev.final_output_path && cur.final_output_path) pushFeed("editor", "film ready ✓", "good");
+    if (cur.status === "failed" && prev.status !== "failed") pushFeed("director", esc(cur.overall_error || "something went wrong"), "bad");
   }
 
   function setText(id, text, html) {
@@ -794,13 +959,19 @@
   }
 
   /* ════════ mount + route ════════ */
-  function keyFor() { return view === "home" ? "home" : `${view}:${selectedId || ""}`; }
+  function keyFor() {
+    if (view === "home") return "home";
+    if (view === "library") return "library";   // stable: poll refreshes the grid in-place
+    return `${view}:${selectedId || ""}`;
+  }
 
   function ensureMounted() {
     const k = keyFor();
     if (k === mountKey) return false;
     mountKey = k;
-    root.innerHTML = view === "home" ? homeShell() : view === "cut" ? cutShell() : labShell();
+    root.innerHTML = view === "home" ? homeShell()
+      : view === "library" ? libraryShell()
+      : view === "cut" ? cutShell() : labShell();
     wire();
     if (view === "lab") { renderFeed(); patchLab(); }
     return true;
@@ -829,6 +1000,8 @@
       lastJobsSig = sig;
       const grid = document.getElementById("cs-grid");
       if (grid) { grid.innerHTML = drawerItems(); wireDrawerItems(); }
+      const lib = document.getElementById("lib-grid");
+      if (lib) { lib.innerHTML = libCards(); bindLibCards(); }
     }
   }
 
@@ -845,8 +1018,27 @@
     if (sc) sc.onclick = close;
     wireDrawerItems();
 
+    // library/history grid: search, status filters, card clicks, create button
+    bindLibCards();
+    const ls = document.getElementById("lib-search");
+    if (ls) ls.oninput = () => {
+      libQuery = ls.value;
+      const g = document.getElementById("lib-grid");
+      if (g) { g.innerHTML = libCards(); bindLibCards(); }
+    };
+    document.getElementById("lib-filters")?.querySelectorAll(".lib-f").forEach((b) => b.onclick = () => {
+      libFilter = b.dataset.f;
+      b.parentElement.querySelectorAll(".lib-f").forEach((x) => x.classList.toggle("on", x === b));
+      const g = document.getElementById("lib-grid");
+      if (g) { g.innerHTML = libCards(); bindLibCards(); }
+    });
+    const ln = document.getElementById("lib-new");
+    if (ln) ln.onclick = () => openSetup("");
+
     // compose entry points
     const hi = document.getElementById("home-input");
+    const hm = document.getElementById("home-mode");
+    if (hm) hm.onchange = () => { renderMode = hm.value; };
     const hr = document.getElementById("home-roll");
     if (hr) hr.onclick = () => openSetup(hi ? hi.value : "");
     if (hi) hi.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); openSetup(hi.value); } };
@@ -861,10 +1053,35 @@
       b.parentElement.querySelectorAll(".rm-opt").forEach((x) => x.classList.toggle("on", x === b));
     });
 
+    // youtube-style info actions
+    const fc = document.getElementById("film-copy");
+    if (fc) fc.onclick = async () => {
+      const lbl = fc.querySelector(".lbl");
+      try {
+        await navigator.clipboard.writeText(`${location.origin}/video/${selectedId}`);
+        fc.classList.add("done"); if (lbl) lbl.textContent = "Copied";
+        setTimeout(() => { fc.classList.remove("done"); if (lbl) lbl.textContent = "Copy link"; }, 1500);
+      } catch (e) {}
+    };
+    const fn = document.getElementById("film-new");
+    if (fn) fn.onclick = () => openSetup(jobState?.topic || "");
+    const ym = document.getElementById("yt-more");
+    if (ym) ym.onclick = () => {
+      const open = document.getElementById("yt-desc").classList.toggle("open");
+      ym.textContent = open ? "show less" : "…more";
+    };
+
     // film player (cut) — video.js <video-player> default skin handles its own controls
-    // scene clips (cut)
-    root.querySelectorAll('.frame[data-st="rendered"]').forEach((f) =>
-      f.onclick = () => openClip(`SC ${f.dataset.id} — ${f.dataset.title}`, `/video/${selectedId}/scene/${f.dataset.id}`));
+    // scene cards link to the real timeline: click seeks the main film to the
+    // scene's cumulative start (sum of prior scene durations), no separate player.
+    root.querySelectorAll(".frames .frame").forEach((f) => f.onclick = () => {
+      const vid = document.querySelector("#screen video");
+      if (!vid) return;
+      let start = 0, p = f.previousElementSibling;
+      while (p) { if (p.classList.contains("frame")) start += parseFloat(p.dataset.dur) || 0; p = p.previousElementSibling; }
+      document.getElementById("screen")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      try { vid.currentTime = start; vid.play().catch(() => {}); } catch (e) {}
+    });
 
     // copy job id (lab)
     const jid = document.getElementById("jobid");
@@ -880,6 +1097,8 @@
     // retry/resume a failed job from the lab error bar
     const rb = document.getElementById("retry-btn");
     if (rb) rb.onclick = () => resumeJob(selectedId, rb);
+    const sb = document.getElementById("stop-btn");
+    if (sb) sb.onclick = () => cancelJob(selectedId, sb);
 
     wireSetup();
   }
@@ -918,6 +1137,7 @@
 
   function gotoTab(v) {
     if (v === "home") { view = "home"; ensureMounted(); return; }
+    if (v === "library") { view = "library"; ensureMounted(); return; }
     if (v === "cut") {
       const id = (selectedId && jobState?.status === "completed") ? selectedId : latestByStatus((s) => s === "completed");
       if (id && id !== selectedId) { selectJob(id, "cut"); return; }
@@ -973,7 +1193,7 @@
 
   function buildSetupQuestions() {
     const a = analyzer || {};
-    const qs = (Array.isArray(a.questions) ? a.questions : []).filter((q) => q.id !== "duration");
+    const qs = (Array.isArray(a.questions) ? a.questions : []).filter((q) => q.id !== "duration" && q.id !== "style");
     setupAns = {};
     const recM = Math.round((a.recommended_duration_seconds || 300) / 60);
     const maxM = Math.max(1, Math.round((a.max_duration_seconds || 1200) / 60));
@@ -1004,6 +1224,22 @@
       <div class="q-custom">custom <input id="dur-min" type="number" min="1" max="${maxM}" placeholder="${recM}"/> min <span style="color:var(--muted-2)">max ${maxM}</span></div>
     </div>`;
 
+    // visual template picker (default Auto = art_director picks from topic)
+    setupAns["style"] = { selected: [], custom: "" };
+    html += `<div class="q" data-q="style">
+      <div class="ql"><span class="qn">${String(qs.length + 2).padStart(2, "0")}</span><span class="qt">Visual template</span><span class="qh">pick a look</span></div>
+      <div class="stylepick">
+        <button class="styletile auto sel" data-style="">
+          <div class="sp-banner sp-auto"><span class="sp-aa">Aa</span></div>
+          <div class="sp-meta"><b>Auto</b><span>we pick to fit the topic</span></div>
+        </button>
+        ${STYLES.map((s) => `<button class="styletile" data-style="${s.k}">
+          <div class="sp-banner" style="background:${s.bg}"><span class="sp-aa" style="color:${s.fg}">Aa</span><span class="sp-dot" style="background:${s.ac}"></span></div>
+          <div class="sp-meta"><b>${s.n}</b><span>${s.v}</span></div>
+        </button>`).join("")}
+      </div>
+    </div>`;
+
     setText("setup-qs", "", html);
     wireSetupQuestions();
   }
@@ -1025,6 +1261,12 @@
         ans.selected = [label]; o.classList.add("sel");
         if (other) other.hidden = true; ans.custom = "";
       }
+    });
+    qroot.querySelectorAll(".styletile").forEach((t) => t.onclick = () => {
+      qroot.querySelectorAll(".styletile").forEach((x) => x.classList.remove("sel"));
+      t.classList.add("sel");
+      const k = t.dataset.style;
+      setupAns["style"] = { selected: k ? [k] : [], custom: "" };
     });
     qroot.querySelectorAll(".other-wrap input").forEach((inp) => {
       const qid = inp.closest(".other-wrap").dataset.q;
@@ -1145,8 +1387,8 @@
     const meta = jobs.find((j) => j.job_id === state.job_id);
     if (meta) { createdMs = createdMs ?? parseUtc(meta.created_at); completedMs = parseUtc(meta.completed_at); }
 
-    // auto-route on completion (unless user is on Home or composing)
-    if (!setupOpen && view !== "home") {
+    // auto-route on completion (unless user is on Home, Library, or composing)
+    if (!setupOpen && view !== "home" && view !== "library") {
       const desired = state.status === "completed" ? "cut" : "lab";
       if (desired !== view) { view = desired; mountKey = null; }
     }

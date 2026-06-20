@@ -204,6 +204,7 @@ async def _assemble_chunked(request: AssemblerRequest, scene_timings: list,
             image_paths=request.image_paths,
             job_id=request.job_id,
             scene_plans=request.scene_plans,
+            job_style=request.job_style,
         )
         validate_composition(html_path)
         _promote_to_index(html_path, comp_dir)  # one Chromium at a time -> safe to reuse index.html
@@ -287,6 +288,7 @@ async def assemble(request: AssemblerRequest):
                     image_paths=request.image_paths,
                     job_id=request.job_id,
                     scene_plans=request.scene_plans,
+                    job_style=request.job_style,
                 )
             log_file(logger, "written", html_path)
 

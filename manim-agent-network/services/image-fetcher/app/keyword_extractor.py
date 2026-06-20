@@ -17,21 +17,28 @@ from shared.llm_client import get_llm_client
 
 logger = logging.getLogger(__name__)
 
-# System prompt instructing the model to return a JSON array of 1-5 keywords
-KEYWORD_EXTRACTION_SYSTEM_PROMPT = """You are a keyword extraction assistant. Your task is to extract 1-5 relevant keywords from the given narration text and visual description that would be useful for searching for contextual images.
+# System prompt instructing the model to return a JSON array of search terms.
+# Constraints mirror MoneyPrinterTurbo's term-generation prompt: short focused
+# terms (1-3 words) that always carry the scene's main subject search far better
+# on Pexels/Pixabay than long descriptive phrases.
+KEYWORD_EXTRACTION_SYSTEM_PROMPT = """You are a stock-image search-term generator. From the narration and visual description, produce 3-5 search terms for finding contextual photos.
 
-Return ONLY a JSON array of 1-5 keyword strings. Do not include any other text, markdown, or explanation.
+Rules:
+1. Each term is 1-3 words. No long phrases.
+2. Every term must include the scene's MAIN SUBJECT (the concrete thing the scene is about), so a generic word never returns off-topic images.
+3. English only.
+4. Return ONLY a JSON array of strings — no markdown, no explanation.
 
-Example output:
-["mathematics", "equation", "graph"]"""
+Example (scene about photosynthesis):
+["photosynthesis", "green leaf", "chloroplast cell", "sunlight plant"]"""
 
-KEYWORD_EXTRACTION_USER_PROMPT_TEMPLATE = """Extract 1-5 keywords from the following scene content that would be useful for finding contextual images.
+KEYWORD_EXTRACTION_USER_PROMPT_TEMPLATE = """Generate 3-5 stock-image search terms (1-3 words each, always include the main subject) for this scene.
 
 Narration text: {narration_text}
 
 Visual description: {visual_description}
 
-Return only a JSON array of keywords."""
+Return only a JSON array of search terms."""
 
 STOP_WORDS = {
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
@@ -102,10 +109,16 @@ def extract_keywords(narration_text: str, visual_description: str) -> List[str]:
         return _fallback_tokenize(narration_text)
         
     except json.JSONDecodeError as e:
-        logger.warning(f"JSON parse failure: {e}, falling back to tokenization")
+        logger.warning(
+            f"LLM keyword extraction returned unparseable JSON ({e}); using regex "
+            "fallback — image search quality may degrade"
+        )
         return _fallback_tokenize(narration_text)
     except Exception as e:
-        logger.warning(f"LLM call failed: {e}, falling back to tokenization")
+        logger.warning(
+            f"LLM keyword extraction failed ({e}); using regex fallback — "
+            "image search quality may degrade. Check NVIDIA_API_KEY / NIM reachability."
+        )
         return _fallback_tokenize(narration_text)
 
 
