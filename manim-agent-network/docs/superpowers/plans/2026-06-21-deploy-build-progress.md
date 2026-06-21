@@ -56,6 +56,10 @@ Both independent reviewers FAILED. Fixed all 5 criticals + cheap correctness:
 - [x] **long-video reject** at `/generate` (Variant B deferred to M2)
 - [x] cheap: mandatory issuer when configured; admin role from DB (revocation); `analyze` fence-strip bug; Pydantic request models; full state mirror; worker-aware health gate
 
+## Santa Method round 2 (it.4) — NICE ✅
+Two FRESH independent reviewers (D, E) both PASS, **zero critical issues**. Reviewer D ran the 28-test suite to confirm. Converged in 2 rounds. M1 web-tier core is adversarially verified and shippable pending keys.
+- Documented non-blocking limitation: `usage_minutes` is recorded on job completion, so in-flight jobs are invisible to the budget gate → worst-case overshoot ≈ `GLOBAL_CONCURRENCY_CAP` (3) × per-job minutes. Bounded + acceptable for the $0/3000-min target; revisit with dispatch-time reservation if it matters.
+
 ## Test status
 `cd services/web-tier && python -m pytest tests/ -q` → **28 passed** (sqlite, mocked auth/dispatch/analyze; no keys).
 
