@@ -46,6 +46,17 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/auth-config.json")
+def auth_config():
+    """Public: lets the static frontend fetch its Clerk publishable key
+    (publishable keys are safe to expose). Empty key => frontend runs ungated
+    (dev)."""
+    return {
+        "clerk_publishable_key": settings.CLERK_PUBLISHABLE_KEY,
+        "clerk_frontend_api": settings.CLERK_FRONTEND_API,
+    }
+
+
 # --- analyze -----------------------------------------------------------------
 @app.post("/analyze")
 def analyze(payload: dict, _p: Principal = Depends(require_user)):

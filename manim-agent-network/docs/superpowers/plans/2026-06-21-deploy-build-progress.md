@@ -33,8 +33,9 @@ Spec: [`../specs/2026-06-21-deployment-hybrid-spec.md`](../specs/2026-06-21-depl
 - [x] `scripts/runner_neon_mirror.py` (drive orchestrator → Neon → R2)
 - [x] Tests: 20 passing (web-tier behaviour + presign determinism + mirror logic)
 - [x] web-tier `Dockerfile` + `requirements.txt`
-- [ ] Frontend: ClerkJS in `studio.html` + token in `studio.js` fetch wrapper; `<ClerkProvider>` in React landing
-- [ ] Wire frontend copy into web-tier image / Azure (served same-origin)
+- [x] Frontend Clerk: `clerk-auth.js` (loads clerk-js, gates sign-in, exposes `window.__authToken()`); `studio.js` `api()` attaches Bearer; `studio.html` includes it; web tier serves public `/auth-config.json` (graceful no-op when unkeyed). *(clerk-js v5 import URL to verify against live docs when keys land)*
+- [ ] `<ClerkProvider>` in React landing *(source in Downloads, outside repo — do at rebuild)*
+- [x] Wire frontend copy into web-tier image (`COPY frontend /frontend`, served same-origin)
 - [ ] Azure App Service F1 deploy manifest (web tier) + env wiring
 - [ ] End-to-end dry run against real services *(needs keys)*
 

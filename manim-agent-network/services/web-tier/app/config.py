@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     CLERK_JWKS_URL: str = ""          # https://<instance>.clerk.accounts.dev/.well-known/jwks.json
     CLERK_ISSUER: str = ""            # https://<instance>.clerk.accounts.dev
     CLERK_AUDIENCE: str = ""          # optional
+    CLERK_PUBLISHABLE_KEY: str = ""   # pk_... — public, shipped to the browser
+    CLERK_FRONTEND_API: str = ""      # optional explicit frontend API host
 
     # --- GitHub Actions dispatch (render runners) ---
     GITHUB_TOKEN: str = ""            # scoped PAT / app token with actions:write

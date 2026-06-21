@@ -20,6 +20,12 @@ def test_health_is_open(raw_client):
     assert raw_client.get("/health").json() == {"status": "ok"}
 
 
+def test_auth_config_is_public(raw_client, monkeypatch):
+    monkeypatch.setattr(settings, "CLERK_PUBLISHABLE_KEY", "pk_test_123")
+    body = raw_client.get("/auth-config.json").json()   # no token required
+    assert body["clerk_publishable_key"] == "pk_test_123"
+
+
 # --- generate / dispatch -----------------------------------------------------
 def test_generate_creates_job_and_dispatches(client):
     r = client.post("/generate", json={"topic": "Pythagoras"})

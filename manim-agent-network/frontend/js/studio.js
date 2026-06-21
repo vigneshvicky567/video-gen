@@ -146,9 +146,13 @@
   }
   const SCENE_LABEL = { queued: "queued", coding: "developing", retry: "healing", rendered: "developed", error: "fault" };
 
-  /* ── api ── */
+  /* ── api ── (attaches Clerk bearer token when configured; see clerk-auth.js) */
   async function api(path, opts) {
-    const res = await fetch(path, opts);
+    opts = opts || {};
+    const token = window.__authToken ? await window.__authToken() : null;
+    const headers = Object.assign({}, opts.headers || {});
+    if (token) headers["Authorization"] = "Bearer " + token;
+    const res = await fetch(path, Object.assign({}, opts, { headers }));
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
   }
