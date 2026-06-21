@@ -1,5 +1,7 @@
 # Deployment & Operations Spec — DigitalOcean + Neon + Clerk + Datadog
 
+> ⚠️ **SUPERSEDED (2026-06-21)** by [`2026-06-21-deployment-hybrid-spec.md`](2026-06-21-deployment-hybrid-spec.md). The DigitalOcean student credit was discontinued (credits expire 2026-07-31), so the host pivoted to the GitHub Actions hybrid (free). Kept for the rejected-alternatives analysis only.
+
 **Date:** 2026-06-21
 **Status:** Approved design, pre-implementation
 **Scope:** Take the existing single-node `docker compose` Manim Agent Network from local-only to a publicly reachable, authenticated, observable deployment — using GitHub Student Pack credits.

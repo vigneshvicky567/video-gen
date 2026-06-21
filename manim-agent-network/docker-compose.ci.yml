@@ -1,0 +1,63 @@
+# Runner override for the GitHub Actions hybrid (Variant A: full pipeline, ONE
+# job, on a 2-vCPU / 7-GB GitHub-hosted runner). Apply on top of the base file:
+#   REGISTRY=ghcr.io/<owner>/<repo> IMAGE_TAG=latest \
+#     docker compose -f docker-compose.yml -f docker-compose.ci.yml pull
+#   ... up -d --no-build
+#
+# Deltas vs base (driven by the resource/CI validation):
+#  - point every service at a PREBUILT ghcr image (runner pulls, never builds)
+#  - strip GPU device reservations (runners have no GPU; onnxruntime-gpu CUDA
+#    load hard-fails)
+#  - drop image-fetcher entirely (degradable: orchestrator returns empty
+#    image_paths and continues) -> reclaims ~800MB + removes CUDA-load risk
+#  - pin VALIDATOR_MAX_CONCURRENT_RENDERS=1; JOB_TIMEOUT_MAX_SECONDS under 6h cap
+#  - per-service mem_limit so a runaway render is OOM-killed as ONE container,
+#    not the kernel killing random PIDs (linear graph keeps validator and
+#    compositor peaks non-overlapping)
+services:
+  base:
+    image: ${REGISTRY}/base-manim-agent:${IMAGE_TAG:-latest}
+
+  orchestrator:
+    image: ${REGISTRY}/orchestrator:${IMAGE_TAG:-latest}
+    mem_limit: 512m
+    environment:
+      - VALIDATOR_MAX_CONCURRENT_RENDERS=1
+      - JOB_TIMEOUT_MAX_SECONDS=20000
+    depends_on:
+      - base
+      - script-writer
+      - code-generator
+      - validator
+      - voiceover
+      - compositor
+
+  script-writer:
+    image: ${REGISTRY}/script-writer:${IMAGE_TAG:-latest}
+    mem_limit: 512m
+
+  code-generator:
+    image: ${REGISTRY}/code-generator:${IMAGE_TAG:-latest}
+    mem_limit: 512m
+
+  validator:
+    image: ${REGISTRY}/validator:${IMAGE_TAG:-latest}
+    mem_limit: 3g
+    environment:
+      - VALIDATOR_MAX_CONCURRENT_RENDERS=1
+
+  voiceover:
+    image: ${REGISTRY}/voiceover:${IMAGE_TAG:-latest}
+    mem_limit: 1g
+    deploy: {}            # drop the base file's GPU reservation (no GPU on runner)
+
+  compositor:
+    image: ${REGISTRY}/compositor:${IMAGE_TAG:-latest}
+    mem_limit: 1536m
+
+  # image-fetcher disabled on the runner (degradable). `profiles` keeps it out of
+  # the default `up`. Re-enable by swapping its wheel to CPU onnxruntime (+~800MB).
+  image-fetcher:
+    image: ${REGISTRY}/image-fetcher:${IMAGE_TAG:-latest}
+    profiles: ["disabled"]
+    deploy: {}
