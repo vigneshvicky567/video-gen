@@ -6,7 +6,7 @@ import datetime as dt
 import pytest
 from sqlalchemy import update
 
-from app import db, dispatch, storage
+from app import db, dispatch, main, storage
 from app.config import settings
 
 
@@ -47,6 +47,42 @@ def test_generate_dispatch_failure_marks_failed(client, monkeypatch):
 
 def test_generate_requires_topic(client):
     assert client.post("/generate", json={}).status_code == 422
+
+
+def test_generate_defaults_target_duration(client):
+    # no brief -> orchestrator-required target_duration_seconds is defaulted
+    jid = client.post("/generate", json={"topic": "no brief"}).json()["job_id"]
+    row = db.get_job(jid)
+    assert row["target_duration_s"] == settings.DEFAULT_TARGET_DURATION_S
+    assert row["brief"]["target_duration_seconds"] == settings.DEFAULT_TARGET_DURATION_S
+
+
+def test_generate_rejects_long_video(client):
+    r = client.post("/generate", json={
+        "topic": "epic", "brief": {"target_duration_seconds": settings.VARIANT_B_THRESHOLD_S + 1}})
+    assert r.status_code == 400   # Variant B deferred -> not silently watchdog-killed
+
+
+def test_monthly_budget_gate(client, monkeypatch):
+    monkeypatch.setattr(settings, "MONTHLY_MINUTE_BUDGET", 10)
+    month = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m")
+    db.get_or_create_user("user_a")
+    db.add_usage("user_a", month, 10)               # already at budget
+    assert client.post("/generate", json={"topic": "x"}).status_code == 429
+
+
+def test_dispatch_not_configured_keeps_queued(client, monkeypatch):
+    monkeypatch.setattr(dispatch, "dispatch_render", lambda job_id: (False, 0))
+    r = client.post("/generate", json={"topic": "local"})
+    assert r.status_code == 200
+    assert db.get_job(r.json()["job_id"])["status"] == "queued"
+
+
+def test_admin_role_revocation_from_db(client, as_user):
+    as_user("admin_1", role="admin")
+    assert client.get("/admin/jobs").status_code == 200
+    db.set_user_role("admin_1", "user")            # revoke in DB
+    assert client.get("/admin/jobs").status_code == 403   # JWT still says admin; DB wins
 
 
 # --- owner scoping -----------------------------------------------------------
@@ -102,8 +138,32 @@ def test_staleness_sweep_fails_stuck_queued(client):
         minutes=settings.QUEUE_STALENESS_MINUTES + 5)
     with db.get_engine().begin() as c:
         c.execute(update(db.jobs).where(db.jobs.c.id == jid).values(created_at=old))
-    body = client.get(f"/job/{jid}").json()
-    assert body["status"] == "failed"
+    main._last_sweep["t"] = 0.0                          # bypass the time-gate /generate just consumed
+    client.get("/jobs")                                  # sweep runs on /jobs, not /job
+    assert client.get(f"/job/{jid}").json()["status"] == "failed"
+
+
+def test_job_poll_does_not_sweep(client, monkeypatch):
+    # the hot /job path must NOT write Neon (CU-hr protection)
+    calls = []
+    monkeypatch.setattr(db, "sweep_stale", lambda *a: calls.append(a) or 0)
+    jid = client.post("/generate", json={"topic": "x"}).json()["job_id"]
+    calls.clear()
+    for _ in range(5):
+        client.get(f"/job/{jid}")
+    assert calls == []                                    # zero sweeps on /job polls
+
+
+def test_sweep_fails_dead_running_job(client):
+    jid = client.post("/generate", json={"topic": "dead"}).json()["job_id"]
+    db.update_status(jid, "running")
+    old = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None) - dt.timedelta(
+        minutes=settings.RUNNING_MAX_MINUTES + 5)
+    with db.get_engine().begin() as c:
+        c.execute(update(db.jobs).where(db.jobs.c.id == jid).values(created_at=old))
+    main._last_sweep["t"] = 0.0
+    client.get("/jobs")
+    assert client.get(f"/job/{jid}").json()["status"] == "failed"
 
 
 # --- video presign -----------------------------------------------------------

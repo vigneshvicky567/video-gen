@@ -28,6 +28,7 @@ def fresh_db(tmp_path, monkeypatch):
     monkeypatch.setattr(dispatch, "dispatch_render", lambda job_id: (True, 204))
     monkeypatch.setattr(analyze, "analyze_topic",
                         lambda topic, client=None: {"feasible": True, "suggested_duration_seconds": 90})
+    main._last_sweep["t"] = 0.0   # reset the sweep time-gate between tests
     _CURRENT["p"] = Principal(clerk_id="user_a", role="user", email="a@x.com")
     yield
 

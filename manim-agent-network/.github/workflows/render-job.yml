@@ -56,13 +56,22 @@ jobs:
       - name: Start pipeline
         run: docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --no-build
 
-      - name: Wait for orchestrator health
+      - name: Wait for required services to be ready
+        # orchestrator + the workers the early pipeline stages need. Covers
+        # validator LaTeX warmup + voiceover model load. image-fetcher (8006) is
+        # disabled; compositor (8005) is internal-only and comes up later.
         run: |
-          for i in $(seq 1 72); do
-            if curl -sf "$ORCH_URL/health" >/dev/null; then echo "ready"; exit 0; fi
+          ready() {
+            curl -sf "$ORCH_URL/health" >/dev/null || return 1
+            for p in 8001 8002 8003 8004; do
+              curl -sf "http://localhost:$p/health" >/dev/null || return 1
+            done
+          }
+          for i in $(seq 1 90); do
+            if ready; then echo "all required services ready"; exit 0; fi
             sleep 5
           done
-          echo "health timeout"; docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --tail=100
+          echo "readiness timeout"; docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --tail=120
           exit 1
 
       - name: Install runner deps

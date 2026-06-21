@@ -36,16 +36,16 @@ jobs:
       - name: Lowercase registry
         run: echo "REGISTRY=$(echo $REGISTRY | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
-      # base first (other images FROM base-manim-agent)
-      - name: Build & push base
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: infrastructure/docker/Dockerfile.base
-          tags: ${{ env.REGISTRY }}/base-manim-agent:latest
-          push: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      # base first — MUST exist under the local tag `base-manim-agent:latest`
+      # because the service Dockerfiles do `FROM base-manim-agent`. A registry-only
+      # push would leave the service builds unable to resolve their base.
+      - name: Build base (local tag + push)
+        run: |
+          set -euo pipefail
+          docker build -f infrastructure/docker/Dockerfile.base \
+            -t base-manim-agent:latest \
+            -t "${REGISTRY}/base-manim-agent:latest" .
+          docker push "${REGISTRY}/base-manim-agent:latest"
 
       - name: Build & push services
         run: |

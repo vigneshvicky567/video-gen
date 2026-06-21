@@ -40,7 +40,8 @@ def analyze_topic(topic: str, client: httpx.Client | None = None) -> dict:
 def _parse(content: str) -> dict:
     content = content.strip()
     if content.startswith("```"):
-        content = content.split("```")[1].lstrip("json").strip()
+        # strip the ```json fence without eating leading j/s/o/n data chars
+        content = content.split("```")[1].removeprefix("json").strip()
     try:
         return json.loads(content)
     except (ValueError, IndexError):

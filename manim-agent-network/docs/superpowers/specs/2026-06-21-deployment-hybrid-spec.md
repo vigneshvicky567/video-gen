@@ -251,9 +251,9 @@ Silent-bill traps (ranked):
 
 **M0 — Security pre-work (BLOCKING, do first):** revoke leaked stale key, scrub `ver-2.0` history, make repo private, add gitleaks gate. *(§11)*
 
-**M1 — Get it live, free (core):** R2 bucket + Neon schema + prebuilt ghcr images + `render-job.yml` (Variant A) + `docker-compose.ci.yml` + thin web tier (dispatch/status/redirect) + runner-writes-Neon + Variant B for long videos. Actions limit $0, Azure F1. **Minimal gate:** a single shared-secret header on `/generate` until Clerk lands — the endpoint must **not** be publicly shared while unauthenticated (open `/generate` = free-compute faucet, AUTH-1). → **LIVE.**
+**M1 — Get it live, free (core):** R2 bucket + Neon schema + prebuilt ghcr images + `render-job.yml` (Variant A) + `docker-compose.ci.yml` + thin web tier (dispatch/status/redirect) + runner-writes-Neon. Actions limit $0, Azure F1. **Clerk auth is in M1 from day one** (decided 2026-06-21 — no shared-secret half-measure; an unauthenticated `/generate` is a free-compute faucet, AUTH-1). **Long videos (`target_duration_seconds > VARIANT_B_THRESHOLD_S`) are rejected at `/generate`** — NOT silently accepted then watchdog-killed; Variant B is deferred to M2. → **LIVE.**
 
-**M2 — Harden + features:** Clerk auth + owner scoping + quotas; admin dashboard + analytics; Datadog (capped). Removes the M1 shared-secret gate.
+**M2 — Harden + features:** admin dashboard + analytics; Datadog (capped); **Variant B** (long-video matrix: prep → matrix render → assemble, R2 round-trip) to lift the long-video restriction.
 
 Each milestone leaves a working system.
 

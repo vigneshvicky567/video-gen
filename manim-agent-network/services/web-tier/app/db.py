@@ -162,15 +162,34 @@ def count_active_jobs() -> int:
         )).scalar_one()
 
 
-def sweep_stale(minutes: int) -> int:
-    """Mark jobs stuck in 'queued' past the staleness window as failed — covers
-    the case where workflow_dispatch fired but no runner ever checked in."""
-    cutoff = _now() - dt.timedelta(minutes=minutes)
+def sweep_stale(queued_minutes: int, running_minutes: int) -> int:
+    """Mark dead jobs failed:
+      - 'queued' past queued_minutes  -> workflow_dispatch fired, no runner checked in
+      - 'running' past running_minutes -> a runner died mid-render (window must be
+        > the workflow wall-clock cap so live jobs are never killed)
+    Count-guarded: does a cheap SELECT first and only opens a write transaction
+    when there is actually something to fail (protects Neon CU-hrs)."""
+    now = _now()
+    q_cut = now - dt.timedelta(minutes=queued_minutes)
+    r_cut = now - dt.timedelta(minutes=running_minutes)
+    cond = ((jobs.c.status == "queued") & (jobs.c.created_at < q_cut)) | \
+           ((jobs.c.status == "running") & (jobs.c.created_at < r_cut))
+    with get_engine().connect() as c:
+        n = c.execute(select(func.count()).select_from(jobs).where(cond)).scalar_one()
+    if not n:
+        return 0
     with get_engine().begin() as c:
-        res = c.execute(update(jobs).where(and_(
-            jobs.c.status == "queued", jobs.c.created_at < cutoff,
-        )).values(status="failed", state={"error": "no runner (staleness sweep)"}, updated_at=_now()))
-        return res.rowcount or 0
+        c.execute(update(jobs).where(cond).values(
+            status="failed", state={"error": "dead job (staleness sweep)"}, updated_at=_now()))
+    return n
+
+
+def global_month_minutes(month: str) -> int:
+    """Total runner-minutes consumed across all users this month (Actions budget)."""
+    with get_engine().connect() as c:
+        v = c.execute(select(func.coalesce(func.sum(usage_minutes.c.runner_minutes), 0))
+                      .where(usage_minutes.c.month == month)).scalar_one()
+    return int(v or 0)
 
 
 def add_usage(owner, month, minutes, jobs_count=1):

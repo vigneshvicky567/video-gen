@@ -47,8 +47,17 @@ Spec: [`../specs/2026-06-21-deployment-hybrid-spec.md`](../specs/2026-06-21-depl
 - [ ] Variant B (long-video matrix: prep → matrix render → assemble, R2 round-trip)
 - [ ] Idempotency hardening + `workflow_dispatch` response check surfaced
 
+## Santa Method round 1 (it.3) — NAUGHTY → fixed
+Both independent reviewers FAILED. Fixed all 5 criticals + cheap correctness:
+- [x] **Brief validation** — web tier defaults/clamps `target_duration_seconds` + rejects > threshold; runner injects default + on orchestrator 4xx marks Neon `failed` (no crash); sweep now also fails dead `running` jobs
+- [x] **build-images.yml** — base tagged locally (`base-manim-agent:latest`) so service `FROM` resolves
+- [x] **sweep off hot `/job` path** — time-gated + count-guarded, runs on `/jobs`+`/generate` only (Neon CU-hr safe)
+- [x] **monthly minute budget gate** — `/generate` checks `global_month_minutes` vs `MONTHLY_MINUTE_BUDGET`; runner records `usage_minutes`
+- [x] **long-video reject** at `/generate` (Variant B deferred to M2)
+- [x] cheap: mandatory issuer when configured; admin role from DB (revocation); `analyze` fence-strip bug; Pydantic request models; full state mirror; worker-aware health gate
+
 ## Test status
-`cd services/web-tier && python -m pytest tests/ -q` → **20 passed** (sqlite, mocked auth/dispatch/analyze; no keys).
+`cd services/web-tier && python -m pytest tests/ -q` → **28 passed** (sqlite, mocked auth/dispatch/analyze; no keys).
 
 ## Notes for next iteration
 - Docker not installed locally → compose merge validates in CI, not here.

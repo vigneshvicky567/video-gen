@@ -4,6 +4,7 @@ per job, serves job status from Neon, and redirects video to a presigned R2 URL.
 Serves the static frontend same-origin (no CORS)."""
 import datetime as dt
 import os
+import time
 import uuid
 
 from contextlib import asynccontextmanager
@@ -11,11 +12,39 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from . import analyze as analyze_mod
 from . import db, dispatch, storage
 from .auth import Principal, require_admin, require_user
 from .config import settings
+
+
+class BriefIn(BaseModel):
+    model_config = {"extra": "allow"}
+    target_duration_seconds: int | None = None
+    audience_level: str | None = None
+
+
+class GenerateIn(BaseModel):
+    topic: str
+    brief: BriefIn | None = None
+
+
+class AnalyzeIn(BaseModel):
+    topic: str
+
+
+# sweep time-gate: never sweep on a hot per-request path more than once per window
+_last_sweep = {"t": 0.0}
+
+
+def _maybe_sweep():
+    nowm = time.monotonic()
+    if nowm - _last_sweep["t"] < settings.SWEEP_MIN_INTERVAL_SECONDS:
+        return
+    _last_sweep["t"] = nowm
+    db.sweep_stale(settings.QUEUE_STALENESS_MINUTES, settings.RUNNING_MAX_MINUTES)
 
 
 @asynccontextmanager
@@ -59,8 +88,8 @@ def auth_config():
 
 # --- analyze -----------------------------------------------------------------
 @app.post("/analyze")
-def analyze(payload: dict, _p: Principal = Depends(require_user)):
-    topic = (payload or {}).get("topic", "").strip()
+def analyze(payload: AnalyzeIn, _p: Principal = Depends(require_user)):
+    topic = payload.topic.strip()
     if not topic:
         raise HTTPException(422, "topic required")
     return analyze_mod.analyze_topic(topic)
@@ -68,12 +97,23 @@ def analyze(payload: dict, _p: Principal = Depends(require_user)):
 
 # --- generate ----------------------------------------------------------------
 @app.post("/generate")
-def generate(payload: dict, request: Request, p: Principal = Depends(require_user)):
-    topic = (payload or {}).get("topic", "").strip()
+def generate(payload: GenerateIn, request: Request, p: Principal = Depends(require_user)):
+    topic = payload.topic.strip()
     if not topic:
         raise HTTPException(422, "topic required")
-    brief = (payload or {}).get("brief") or {}
-    target = brief.get("target_duration_seconds")
+
+    # normalize the brief: the orchestrator's GenerationBrief REQUIRES
+    # target_duration_seconds (60..2400). Default when omitted, clamp the floor,
+    # and reject anything above the M1 single-runner ceiling (Variant B deferred)
+    # rather than silently accepting a job the 6h watchdog would later kill.
+    brief = payload.brief.model_dump() if payload.brief else {}
+    target = brief.get("target_duration_seconds") or settings.DEFAULT_TARGET_DURATION_S
+    target = max(60, int(target))
+    if target > settings.VARIANT_B_THRESHOLD_S:
+        raise HTTPException(
+            400, f"videos longer than {settings.VARIANT_B_THRESHOLD_S}s are not yet "
+                 "supported (long-video rendering is on the roadmap)")
+    brief["target_duration_seconds"] = target
 
     # idempotency: a client retry with the same key returns the same job
     idem = request.headers.get("Idempotency-Key")
@@ -81,13 +121,17 @@ def generate(payload: dict, request: Request, p: Principal = Depends(require_use
     if existing:
         return {"job_id": existing["id"], "message": "existing job"}
 
-    # quotas
+    _maybe_sweep()  # free up dead jobs before counting against caps
+
+    # quotas + monthly Actions-minute budget (keeps the $0 / 3000-min guarantee)
     user = db.get_or_create_user(p.clerk_id, p.email, p.role)
     quota = user.get("daily_job_quota") or settings.DAILY_JOB_QUOTA_DEFAULT
     if db.count_user_jobs_today(p.clerk_id) >= quota:
         raise HTTPException(429, "daily job quota reached")
     if db.count_active_jobs() >= settings.GLOBAL_CONCURRENCY_CAP:
         raise HTTPException(429, "system busy — try again shortly")
+    if db.global_month_minutes(_month()) >= settings.MONTHLY_MINUTE_BUDGET:
+        raise HTTPException(429, "monthly render budget reached — resets next month")
 
     job_id = str(uuid.uuid4())
     db.create_job(job_id, p.clerk_id, topic, brief, target, idempotency_key=idem)
@@ -102,13 +146,15 @@ def generate(payload: dict, request: Request, p: Principal = Depends(require_use
 # --- job status (owner-scoped) ----------------------------------------------
 @app.get("/jobs")
 def list_jobs(p: Principal = Depends(require_user)):
-    db.sweep_stale(settings.QUEUE_STALENESS_MINUTES)
+    _maybe_sweep()                               # time-gated; not on the hot /job path
     return [_public_job(r) for r in db.list_jobs(p.clerk_id)]
 
 
 @app.get("/job/{job_id}")
 def get_job(job_id: str, p: Principal = Depends(require_user)):
-    db.sweep_stale(settings.QUEUE_STALENESS_MINUTES)
+    # NO sweep here — this is the frequently-polled hot path; sweeping would
+    # write Neon on every poll and burn CU-hrs (spec §7). Sweep runs on /jobs +
+    # /generate, time-gated.
     row = db.get_job(job_id)
     if not row or row["owner_user_id"] != p.clerk_id:
         raise HTTPException(404, "not found")   # 404 (not 403) — no existence leak

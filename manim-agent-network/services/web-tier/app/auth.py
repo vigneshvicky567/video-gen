@@ -30,6 +30,9 @@ def verify_token(token: str) -> Principal:
     client = _jwks()
     if client is None:
         raise HTTPException(503, "auth not configured")
+    if not settings.CLERK_ISSUER:
+        # never run signature-only verification in a configured deploy
+        raise HTTPException(503, "CLERK_ISSUER not configured")
     try:
         signing_key = client.get_signing_key_from_jwt(token).key
         claims = jwt.decode(
@@ -62,6 +65,9 @@ async def require_user(p: Principal = Depends(get_principal)) -> Principal:
 
 
 async def require_admin(p: Principal = Depends(get_principal)) -> Principal:
-    if p.role != "admin":
+    # source of truth is the DB row, not the (cached) JWT claim, so a revoked
+    # admin loses access immediately rather than at next token refresh
+    user = db.get_or_create_user(p.clerk_id, p.email, p.role)
+    if (user or {}).get("role") != "admin":
         raise HTTPException(403, "admin only")
     return p

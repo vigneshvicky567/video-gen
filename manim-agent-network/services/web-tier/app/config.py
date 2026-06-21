@@ -40,8 +40,11 @@ class Settings(BaseSettings):
     DAILY_JOB_QUOTA_DEFAULT: int = 20
     GLOBAL_CONCURRENCY_CAP: int = 3        # max simultaneously active (queued+running) jobs
     QUEUE_STALENESS_MINUTES: int = 15      # queued with no runner check-in -> failed
+    RUNNING_MAX_MINUTES: int = 380         # running past this (> 350min workflow cap) -> dead runner -> failed
+    SWEEP_MIN_INTERVAL_SECONDS: int = 120  # time-gate so sweeps don't run on every poll
     MONTHLY_MINUTE_BUDGET: int = 2800      # under the 3000 Actions min/mo cap
-    VARIANT_B_THRESHOLD_S: int = 540       # >~9min routes to long-video path (later)
+    DEFAULT_TARGET_DURATION_S: int = 120   # used when a request omits a duration
+    VARIANT_B_THRESHOLD_S: int = 540       # M1 single-runner ceiling; longer needs Variant B (deferred) -> rejected
 
     # --- Frontend ---
     FRONTEND_DIR: str = "/frontend"        # served same-origin (no CORS)

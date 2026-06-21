@@ -10,10 +10,13 @@
 Pure helpers (status mapping, R2 key, upload/terminal decisions) are unit-tested
 in tests/test_runner_mirror.py; the IO shell is thin.
 """
+import datetime as dt
 import json
 import os
 import sys
 import time
+
+_DEFAULT_TARGET = int(os.environ.get("WEBTIER_DEFAULT_TARGET", "120"))
 
 # Web-tier job lifecycle: queued -> running -> done | failed | cancelled
 _TERMINAL = {"done", "failed", "cancelled"}
@@ -46,12 +49,31 @@ def should_upload(web_status: str, final_output_path: str | None) -> bool:
 # --- IO shell (only runs under __main__) ------------------------------------
 def _read_job(conn, job_id):
     with conn.cursor() as cur:
-        cur.execute("SELECT topic, brief, target_duration_s FROM jobs WHERE id=%s", (job_id,))
+        cur.execute("SELECT topic, brief, target_duration_s, owner_user_id "
+                    "FROM jobs WHERE id=%s", (job_id,))
         row = cur.fetchone()
     if not row:
         raise SystemExit(f"job {job_id} not found in Neon")
-    topic, brief, target = row
-    return topic, (brief or {}), target
+    topic, brief, target, owner = row
+    brief = dict(brief or {})
+    # the orchestrator REQUIRES target_duration_seconds — guarantee it
+    brief.setdefault("target_duration_seconds", target or _DEFAULT_TARGET)
+    return topic, brief, owner
+
+
+def _record_minutes(conn, owner, minutes):
+    """Account runner wall-clock minutes against the monthly Actions budget."""
+    if not owner:
+        return
+    month = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m")
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO usage_minutes (owner_user_id, month, runner_minutes, jobs_count) "
+            "VALUES (%s,%s,%s,1) ON CONFLICT (owner_user_id, month) DO UPDATE SET "
+            "runner_minutes = usage_minutes.runner_minutes + EXCLUDED.runner_minutes, "
+            "jobs_count = usage_minutes.jobs_count + 1",
+            (owner, month, minutes))
+    conn.commit()
 
 
 def _neon_update(conn, job_id, status, video_url=None, state=None):
@@ -86,37 +108,52 @@ def main():
     started = time.monotonic()
 
     conn = psycopg.connect(os.environ["NEON_DATABASE_URL"])
-    topic, brief, target = _read_job(conn, job_id)
+    topic, brief, owner = _read_job(conn, job_id)
     _neon_update(conn, job_id, "running")
 
-    r = httpx.post(f"{orch}/generate", json={"topic": topic, "brief": brief}, timeout=60)
-    r.raise_for_status()
-    internal_id = r.json()["job_id"]
-
     last = None
-    while True:
-        if time.monotonic() - started > watchdog:
-            _neon_update(conn, job_id, "failed", state={"error": "runner wallclock watchdog"})
-            raise SystemExit("watchdog: exceeded budget")
+    try:
+        # 4xx from the orchestrator (e.g. brief validation) must FAIL the Neon row,
+        # never crash the runner before it can record state.
         try:
-            js = httpx.get(f"{orch}/job/{internal_id}", timeout=30).json()
-        except Exception:
-            time.sleep(5)
-            continue
-        web = map_status(js.get("status", ""))
-        if web != last:
-            _neon_update(conn, job_id, web, state={"orchestrator": js.get("status")})
-            last = web
-        if is_terminal(web):
-            final = js.get("final_output_path")
-            if should_upload(web, final):
-                key = r2_key(job_id)
-                _upload_r2(final, key)
-                _neon_update(conn, job_id, "done", video_url=key)
-            break
-        time.sleep(5)
+            r = httpx.post(f"{orch}/generate", json={"topic": topic, "brief": brief}, timeout=60)
+            r.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            _neon_update(conn, job_id, "failed",
+                         state={"error": f"orchestrator rejected job (HTTP {e.response.status_code})"})
+            last = "failed"
+            return
+        internal_id = r.json()["job_id"]
 
-    conn.close()
+        while True:
+            if time.monotonic() - started > watchdog:
+                _neon_update(conn, job_id, "failed", state={"error": "runner wallclock watchdog"})
+                last = "failed"
+                break
+            try:
+                js = httpx.get(f"{orch}/job/{internal_id}", timeout=30).json()
+            except Exception:
+                time.sleep(5)
+                continue
+            web = map_status(js.get("status", ""))
+            if web != last:
+                _neon_update(conn, job_id, web, state=js)   # mirror full orchestrator state
+                last = web
+            if is_terminal(web):
+                final = js.get("final_output_path")
+                if should_upload(web, final):
+                    key = r2_key(job_id)
+                    _upload_r2(final, key)
+                    _neon_update(conn, job_id, "done", video_url=key)
+                break
+            time.sleep(5)
+    finally:
+        # record consumed runner minutes against the monthly Actions budget
+        minutes = max(1, int((time.monotonic() - started) / 60))
+        try:
+            _record_minutes(conn, owner, minutes)
+        finally:
+            conn.close()
     print(f"job {job_id} finished: {last}")
 
 
