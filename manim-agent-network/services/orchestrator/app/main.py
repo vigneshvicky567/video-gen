@@ -253,7 +253,8 @@ async def resume_job(job_id: str, background_tasks: BackgroundTasks):
     The graph nodes skip scenes already in render_paths/audio_paths, so resuming
     re-does only unfinished work. Re-enter at 'validation' (a no-op when renders
     exist) so the run routes straight to whatever stage actually failed. Audio is
-    cleared so a fixed voiceover regenerates cleanly.
+    KEPT — voiceover now runs pre-code and skips scenes already voiced, so clearing
+    it just forces a needless re-narration of the whole film on every resume.
     """
     state = db.get_job(job_id)
     if state is None:
@@ -269,7 +270,6 @@ async def resume_job(job_id: str, background_tasks: BackgroundTasks):
     state.pop("webhook_url", None)
     state["status"] = "validation"
     state["overall_error"] = None
-    state["audio_paths"] = {}
     db.update_job(job_id, state)
 
     background_tasks.add_task(

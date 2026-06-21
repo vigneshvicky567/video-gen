@@ -12,6 +12,28 @@ from shared.log import get_logger
 
 logger = get_logger(__name__)
 
+# Scene-id-keyed state dicts. JSON serialises their int keys to strings, so on
+# reload (resume after restart) every `scene_id in render_paths` check would fail
+# and the graph would re-run finished work and never reach the assembler. Revive
+# the int keys after json.loads. Must match the Dict[int, ...] fields in
+# shared/models/agent_state.py.
+_SCENE_KEYED = ("code_paths", "render_paths", "audio_paths", "image_paths",
+                "retry_counts", "error_logs", "previous_code", "audio_segments")
+
+
+def _revive_scene_keys(state: Dict[str, Any]) -> Dict[str, Any]:
+    for k in _SCENE_KEYED:
+        v = state.get(k)
+        if isinstance(v, dict):
+            out = {}
+            for kk, vv in v.items():
+                try:
+                    out[int(kk)] = vv
+                except (ValueError, TypeError):
+                    out[kk] = vv
+            state[k] = out
+    return state
+
 
 class JobDatabase:
     """Thread-safe SQLite database for job persistence."""
@@ -107,7 +129,7 @@ class JobDatabase:
             """, (job_id,))
             row = cursor.fetchone()
             if row:
-                state = json.loads(row["state_json"])
+                state = _revive_scene_keys(json.loads(row["state_json"]))
                 state["webhook_url"] = row["webhook_url"]
                 return state
             return None
@@ -149,7 +171,8 @@ class JobDatabase:
             out = []
             for row in cursor.fetchall():
                 try:
-                    out.append({"job_id": row["job_id"], "state": json.loads(row["state_json"])})
+                    out.append({"job_id": row["job_id"],
+                                "state": _revive_scene_keys(json.loads(row["state_json"]))})
                 except (ValueError, TypeError):
                     continue
             return out

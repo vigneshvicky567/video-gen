@@ -13,6 +13,14 @@ class Settings(BaseSettings):
     NVIDIA_READ_TIMEOUT_SECONDS: int = int(os.getenv("NVIDIA_READ_TIMEOUT_SECONDS", "180"))
     NVIDIA_RPM: int = int(os.getenv("NVIDIA_RPM", "35"))  # requests per minute (stay under 40)
 
+    # ── Mistral (separate provider, separate quota) — code-gen fallback ──────────
+    # When NIM fails/429s, code-gen retries the same call against Mistral (OpenAI-
+    # compatible API). Empty key = no fallback (NIM-only). mistral-large-latest is
+    # the most capable general model for following the big HF/Manim rulesets.
+    MISTRAL_API_KEY: str = os.getenv("MISTRAL_API_KEY", "")
+    MISTRAL_BASE_URL: str = os.getenv("MISTRAL_BASE_URL", "https://api.mistral.ai/v1")
+    MISTRAL_MODEL: str = os.getenv("MISTRAL_MODEL", "mistral-large-latest")
+
     # ── Anthropic Claude API (commented out — Claude API expired, reverted to NVIDIA) ─
     # ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
     # ANTHROPIC_RPM: int = int(os.getenv("ANTHROPIC_RPM", "50"))

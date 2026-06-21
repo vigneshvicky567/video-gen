@@ -56,6 +56,61 @@ logger.info("Code Generator ready", extra={"model": settings.CODE_GENERATOR_MODE
 logger.info("Sanitizer self-test passed")
 
 
+# ── Mistral fallback (separate provider/quota) ────────────────────────────────
+import httpx as _httpx
+from types import SimpleNamespace
+
+# Circuit breaker: after NIM fails, route code-gen straight to Mistral for a
+# cooldown window so a 40-scene batch doesn't burn the per-scene NIM retry budget
+# (~tens of seconds each) before failing over. Resets to trying NIM after cooldown.
+_nim_down_until = 0.0
+_NIM_COOLDOWN_S = 120
+
+
+async def _mistral_chat(messages, max_tokens, temperature, response_format=None):
+    """One code-gen call against Mistral (OpenAI-compatible). Returns a NIM-shaped
+    response so callers read resp.choices[0].message.content unchanged."""
+    payload = {
+        "model": settings.MISTRAL_MODEL,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": min(max(temperature or 0.3, 0.0), 1.0),  # Mistral caps temp at 1.0
+    }
+    if response_format:
+        payload["response_format"] = response_format
+    url = f"{settings.MISTRAL_BASE_URL.rstrip('/')}/chat/completions"
+    async with _httpx.AsyncClient(timeout=150) as c:
+        r = await c.post(url, headers={"Authorization": f"Bearer {settings.MISTRAL_API_KEY}",
+                                       "Content-Type": "application/json"}, json=payload)
+        r.raise_for_status()
+        data = r.json()
+    choices = [SimpleNamespace(message=SimpleNamespace(content=(ch.get("message") or {}).get("content")))
+               for ch in data.get("choices", [])]
+    return SimpleNamespace(choices=choices, model=data.get("model"), usage=data.get("usage"))
+
+
+async def _llm_chat(messages, max_tokens, temperature, top_p=None, response_format=None):
+    """Code-gen LLM call: NIM primary, Mistral fallback on any NIM failure (incl.
+    429). A process circuit breaker skips NIM during a cooldown after it fails so
+    the rest of a batch fails over fast instead of retrying a dead NIM per scene."""
+    global _nim_down_until
+    has_mistral = bool(settings.MISTRAL_API_KEY)
+    if not (has_mistral and time.monotonic() < _nim_down_until):
+        try:
+            return await client.chat.completions.acreate(
+                model=settings.CODE_GENERATOR_MODEL, messages=messages,
+                temperature=temperature, top_p=top_p,
+                max_tokens=max_tokens, response_format=response_format,
+            )
+        except Exception as e:
+            if not has_mistral:
+                raise
+            _nim_down_until = time.monotonic() + _NIM_COOLDOWN_S
+            logger.warning(f"NIM code-gen failed -> Mistral fallback (cooldown {_NIM_COOLDOWN_S}s)",
+                           extra={"error": str(e)[:160], "mistral_model": settings.MISTRAL_MODEL})
+    return await _mistral_chat(messages, max_tokens, temperature, response_format)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Scene classification (fallback when script-writer doesn't set content_type)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -112,6 +167,15 @@ Visual baseline (override with explicit user-supplied palette when given):
   set one motion signature via `gsap.timeline({defaults:{ease:"power3.out",
   duration:0.6}})`, vary eases (≥3/scene), use autoAlpha not opacity. Entrance
   animations only — NO exit animations except the final scene.
+- ⛔ VISIBILITY (the #1 render-killer — read carefully): NEVER set `opacity:0` or
+  `visibility:hidden` in CSS on an element you then animate in with
+  `gsap.from(el,{opacity:0})` / `gsap.from(el,{autoAlpha:0})`. `from()` tweens FROM
+  your value TO the element's CURRENT (CSS) value — if CSS already pins it at 0 the
+  tween is 0→0 and the element STAYS INVISIBLE FOR THE WHOLE SCENE (blank screen).
+  Rule: elements revealed via `gsap.from(...)` MUST keep their natural visible CSS
+  (no opacity/visibility hiding) — `from()` supplies the hidden start itself and
+  reveals to the real value. ONLY hide in CSS when you reveal with `gsap.to(el,
+  {opacity:1})` instead. Never both. When unsure, use `gsap.from()` + visible CSS.
 - CONTRAST: on-screen text must hit WCAG 4.5:1 against whatever is behind it.
 - GSAP CDN (exact URL — the compositor dedupes it against the master doc):
   https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"""
@@ -173,7 +237,7 @@ BACKGROUND IMAGERY — {n} relevant photo{plural} available; use the BEST one as
 - Scrim for legibility: a <div style="position:absolute;inset:0;z-index:1;background:linear-gradient(...)"> using the palette's dark base at 0.55-0.85 alpha, heaviest where text sits, so all text keeps WCAG 4.5:1.
 - The `#composition` div still needs its opaque palette background-color (shows if the image fails to load). All .scene-content text/decoratives sit ABOVE the scrim (z-index:2+).
 - Ken-Burns the bg on the timeline, subtle and slow: tl.fromTo("#bg-photo", {{scale:1.0}}, {{scale:1.08, ease:"power1.inOut", duration:{duration}}}, 0).
-- If no image fits the scene's meaning, omit it — leftover placeholders are safe to drop."""
+- You MUST use __IMAGE_0__ as the background. Do NOT skip it — these images were pre-selected for this scene."""
 
 
 def _cue_sheet(audio_cues, kind: str) -> str:
@@ -319,6 +383,28 @@ def _extract_html(text: str) -> str:
     return m.group(0) if m else text.strip()
 
 
+_OPACITY0_RE = re.compile(r"opacity\s*:\s*0(?:\.0+)?\s*(;|(?=\}))", re.IGNORECASE)
+_VIS_HIDDEN_RE = re.compile(r"visibility\s*:\s*hidden\s*(;|(?=\}))", re.IGNORECASE)
+_STYLE_BLOCK_RE = re.compile(r"(<style[^>]*>)(.*?)(</style>)", re.IGNORECASE | re.DOTALL)
+
+
+def _unhide_css(html: str) -> str:
+    """Strip `opacity:0` / `visibility:hidden` from CSS RULE blocks only.
+
+    The #1 render-killer: the LLM pins an element hidden in CSS (opacity:0) AND
+    animates it in with gsap.from({opacity:0}). `from` tweens FROM the given value
+    TO the element's CURRENT (CSS) value — 0 -> 0 — so it stays invisible forever
+    (blank screens, no visible text). gsap.from's immediateRender already supplies
+    the hidden start state and reveals to the true value, so the CSS hide is both
+    redundant and the bug. We scrub it ONLY inside <style> (never inside the GSAP
+    JS, where `opacity:0`/`autoAlpha:0` are correct tween args)."""
+    def scrub(m: "re.Match") -> str:
+        body = _OPACITY0_RE.sub("", m.group(2))
+        body = _VIS_HIDDEN_RE.sub("", body)
+        return m.group(1) + body + m.group(3)
+    return _STYLE_BLOCK_RE.sub(scrub, html)
+
+
 async def _generate_hyperframes(request):
     scene    = request.scene
     scene_id = scene.scene_id
@@ -344,20 +430,22 @@ async def _generate_hyperframes(request):
     for attempt in range(3):
         try:
             t0 = time.time()
-            resp = await client.chat.completions.acreate(
-                model    = settings.CODE_GENERATOR_MODEL,
+            resp = await _llm_chat(
                 messages = [
                     {"role": "system", "content": _HF_SYSTEM},
                     {"role": "user",   "content": prompt},
                 ],
+                max_tokens  = settings.CODE_GENERATOR_MAX_TOKENS,
                 temperature = _sampling_temperature(0.6),
                 top_p       = _sampling_top_p(),
-                max_tokens  = settings.CODE_GENERATOR_MAX_TOKENS,
             )
             elapsed = time.time() - t0
             html = _extract_html(resp.choices[0].message.content)
             if not html:
                 raise ValueError("LLM returned empty HTML")
+            # Safety net: strip CSS opacity:0/visibility:hidden so gsap.from()
+            # entrances can't animate 0->0 and leave content invisible.
+            html = _unhide_css(html)
             # Inline any __IMAGE_k__ placeholders to base64 data URIs so the
             # written file is self-contained (renders the same standalone or
             # inlined into the master composition).
@@ -404,9 +492,12 @@ through `manim render` and a forbidden-API sanitizer; both will reject
 violations.
 
 Pipeline-specific contract:
-- Background MUST be set at the top of `construct()` with
-  `config.background_color = WHITE`. The white canvas is provided by the
-  HyperFrames composition layer; never render white text/strokes on it.
+- Background MUST be set at MODULE level — directly under `from manim import *`,
+  OUTSIDE the class, BEFORE the class definition:
+    config.background_color = WHITE
+  Setting it inside `construct()` is a SILENT NO-OP (camera is created before
+  construct runs). The white canvas is provided by the HyperFrames composition
+  layer; never render white text/strokes on it.
 - Use rich dark colors for math: axes `"#1a1a2e"`, curves `"#e63946"` or
   `"#2196f3"`, dots `"#ff9800"`.
 - The class name MUST be exactly `Scene{N}` (one integer the caller fills in).
@@ -414,9 +505,10 @@ Pipeline-specific contract:
 
 
 _MANIM_FEW_SHOT = (
-    '{"python_code": "from manim import *\\n\\nclass Scene1(Scene):\\n'
+    '{"python_code": "from manim import *\\n'
+    'config.background_color = WHITE  # MODULE level — outside the class\\n\\n'
+    'class Scene1(Scene):\\n'
     '    def construct(self):\\n'
-    '        config.background_color = WHITE\\n'
     '        axes = Axes(x_range=[-3,3], y_range=[0,9], x_length=8, y_length=5,'
     ' axis_config={\\\"color\\\": \\\"#1a1a2e\\\", \\\"stroke_width\\\": 3})'
     '.move_to(DOWN*0.3)\\n'
@@ -427,7 +519,8 @@ _MANIM_FEW_SHOT = (
     '        self.play(Create(curve), run_time=2)\\n'
     '        dot = Dot(axes.c2p(-2, 4), color=\\\"#ff9800\\\", radius=0.12)\\n'
     '        self.play(FadeIn(dot))\\n'
-    '        self.play(MoveAlongPath(dot, curve), run_time=2, rate_func=there_and_back)\\n'
+    '        self.play(MoveAlongPath(dot, curve), run_time=2,'
+    ' rate_func=rate_functions.there_and_back)\\n'
     '        self.wait(1)\\n"}'
 )
 
@@ -468,7 +561,8 @@ Visual:     {scene.visual_description}
 
 Class name MUST be exactly `Scene{sid}` (subclass of `Scene`).
 No on-screen title text (the HyperFrames layer adds the scene title).
-First line of `construct()`: `config.background_color = WHITE`.
+`config.background_color = WHITE` MUST be at MODULE level — directly under
+`from manim import *`, OUTSIDE the class. Inside `construct()` it is a no-op.
 
 PACING — the animation should unfold across the {duration}s of narration, not
 race through in a few seconds. Spread the reveals over the whole scene: keep
@@ -499,15 +593,14 @@ async def _generate_manim(request):
 
     try:
         llm_start = time.time()
-        response  = await client.chat.completions.acreate(
-            model    = settings.CODE_GENERATOR_MODEL,
+        response  = await _llm_chat(
             messages = [
                 {"role": "system", "content": _MANIM_SYSTEM},
                 {"role": "user",   "content": prompt},
             ],
+            max_tokens      = settings.CODE_GENERATOR_MAX_TOKENS,
             temperature     = _sampling_temperature(0.2),
             top_p           = _sampling_top_p(),
-            max_tokens      = settings.CODE_GENERATOR_MAX_TOKENS,
             response_format = {"type": "json_object"},
         )
         llm_dur = time.time() - llm_start

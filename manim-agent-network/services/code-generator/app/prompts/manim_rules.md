@@ -163,6 +163,52 @@ self.wait(1)
 - `arrange_in_grid(rows=R, cols=C, buff=0.5)` for grids.
 - Escape hatch for unavoidably-large content: subclass `MovingCameraScene` and `self.camera.auto_zoom(group, margin=1)` to fit the camera to the content.
 
+## Text collision — HARD rules (the #2 real bug)
+
+### Title + subtitle vertical stacking
+
+NEVER position a subtitle by absolute coordinate — it will land on the title.
+Always derive the subtitle's position FROM the title using `next_to`:
+
+```python
+# FORBIDDEN — overlap guaranteed
+title    = Text("Conservation of Energy", font_size=56, color=BLACK).to_edge(UP)
+subtitle = Text("Total Energy = Constant", font_size=36, color=RED_E)
+subtitle.move_to(UP * 2.8)   # hardcoded y crashes into the title
+
+# REQUIRED — subtitle always clears the title
+title    = Text("Conservation of Energy", font_size=56, color=BLACK)
+subtitle = Text("Total Energy = Constant", font_size=36, color=RED_E)
+header   = VGroup(title, subtitle).arrange(DOWN, buff=0.2)
+header.to_edge(UP, buff=0.3)
+```
+
+### Multi-label layout under diagrams
+
+When a diagram has N labeled objects (bars, nodes, columns):
+NEVER call `label.next_to(obj, DOWN)` per object — labels overlap when spacing < label width.
+
+```python
+# FORBIDDEN — individual next_to causes overlap
+label1.next_to(bar1, DOWN)
+label2.next_to(bar2, DOWN)
+label3.next_to(bar3, DOWN)
+
+# REQUIRED — group + arrange uses real bounding boxes, zero overlap
+labels = VGroup(
+    Text("Pressure Energy", font_size=24, color=BLACK),
+    Text("Kinetic Energy",  font_size=24, color=BLACK),
+    Text("Potential Energy", font_size=24, color=BLACK),
+)
+labels.arrange(RIGHT, buff=0.3)
+if labels.width > 12:
+    labels.scale_to_fit_width(12)
+labels.next_to(bars_group, DOWN, buff=0.4)
+```
+
+`VGroup.arrange()` measures actual rendered widths and spaces accordingly —
+it is the ONLY collision-free approach for sibling labels.
+
 ## Clear before introducing — NEVER accumulate (the #1 clutter bug)
 
 Mobjects do NOT auto-clear between `self.play` calls. Drawing new content on top of old produces overlapping, unreadable composites. Match every introduction with a removal:

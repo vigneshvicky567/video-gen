@@ -99,6 +99,10 @@ services:
       - RENDER_MODE=${RENDER_MODE:-hybrid}
       - NVIDIA_RPM=${NVIDIA_RPM:-35}
       - NIM_MAX_CONCURRENT=${NIM_MAX_CONCURRENT:-3}
+      # Mistral fallback when NIM fails/429s (separate quota)
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+      - MISTRAL_BASE_URL=${MISTRAL_BASE_URL:-https://api.mistral.ai/v1}
+      - MISTRAL_MODEL=${MISTRAL_MODEL:-mistral-large-latest}
     depends_on:
       - base
 

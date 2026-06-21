@@ -162,10 +162,21 @@ async def image_fetcher_node(state: LangGraphState):
     try:
         script = state["script"]
         job_id = state["job_id"]
-        hf_scenes = [
-            s for s in script["scenes"]
-            if (s.get("content_type") or "").lower() == "hyperframes"
-        ]
+        render_mode = (state.get("brief") or {}).get("render_mode", "hybrid").strip().lower()
+
+        if render_mode == "manim":
+            # Pure Manim job — no images needed at all.
+            return {"image_paths": {}, "status": "image_fetch"}
+        elif render_mode == "hyperframes":
+            # All scenes forced to HF regardless of script-writer content_type tags.
+            hf_scenes = script["scenes"]
+        else:
+            # Hybrid: only fetch for scenes the script-writer tagged as hyperframes.
+            hf_scenes = [
+                s for s in script["scenes"]
+                if (s.get("content_type") or "").lower() == "hyperframes"
+            ]
+
         if not hf_scenes:
             return {"image_paths": {}, "status": "image_fetch"}
         img_request = ImageFetcherRequest(job_id=job_id, scenes=hf_scenes)

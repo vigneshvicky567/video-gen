@@ -86,11 +86,12 @@
     return `${Math.floor(s / 86400)}d ago`;
   }
 
-  const RUNNING = new Set(["starting", "pending", "script_generation", "code_generation",
-    "validation", "voiceover", "voiceover_and_images", "assembly"]);
+  const RUNNING = new Set(["starting", "pending", "script_generation", "image_fetch",
+    "code_generation", "validation", "voiceover", "voiceover_and_images", "assembly"]);
   function chipText(s) {
     return ({
       starting: "starting", pending: "starting", script_generation: "writing story",
+      image_fetch: "finding images",
       code_generation: "creating scenes", validation: "rendering", voiceover: "adding voice",
       voiceover_and_images: "adding voice", assembly: "finishing up",
       completed: "ready", failed: "failed", cancelled: "stopped",
@@ -190,19 +191,27 @@
     </div>`;
   }
 
+  // One control per job: Stop while running, Continue/Retry when stopped/failed,
+  // nothing when done. Shared by the drawer and the Library grid. Wiring binds by
+  // data-stop / data-retry attribute, so `cls` only carries styling.
+  function jobCtlBtn(f, cls) {
+    if (RUNNING.has(f.status))
+      return `<button class="${cls}" data-stop="${f.job_id}" title="Stop — progress is saved, resume later">■ Stop</button>`;
+    if (f.status === "failed" || f.status === "cancelled")
+      return `<button class="${cls}" data-retry="${f.job_id}" title="Resume this job">↻ ${f.status === "cancelled" ? "Continue" : "Retry"}</button>`;
+    return "";
+  }
+
   function drawerItems() {
     if (!jobs.length) return `<p class="cs-empty">No films yet.<br/>The swarm awaits its first command.</p>`;
     return jobs.map((f) => {
       const kind = f.status === "completed" ? "ready" : (f.status === "failed" || f.status === "cancelled") ? "fail" : "render";
       const badge = f.status === "completed" ? "Ready" : f.status === "failed" ? "Failed" : f.status === "cancelled" ? "Stopped" : "Rendering";
       const meta = `${chipText(f.status)} · ${timeAgo(parseUtc(f.created_at))}`;
-      const stoppable = f.status === "failed" || f.status === "cancelled";
-      const retry = stoppable
-        ? `<button class="cs-retry" data-retry="${f.job_id}" title="Resume this job">↻ ${f.status === "cancelled" ? "Continue" : "Retry"}</button>` : "";
       return `<div class="cs ${f.job_id === selectedId ? "on" : ""}" data-id="${f.job_id}">
         <div class="ti">${esc(f.topic)}</div>
         <div class="ti-meta">${esc(meta)}</div>
-        <span class="bd bd-${kind}">${badge}</span>${retry}
+        <span class="bd bd-${kind}">${badge}</span>${jobCtlBtn(f, "cs-retry")}
       </div>`;
     }).join("");
   }
@@ -316,7 +325,7 @@
         ? `<video class="lib-thumb" src="/video/${f.job_id}#t=1" preload="metadata" muted playsinline></video>`
         : `<div class="lib-thumb ph ${kind}">${failed ? "⚠" : ""}</div>`;
       return `<article class="lib-card ${kind}" data-id="${f.job_id}" tabindex="0" title="${esc(f.topic)}">
-        <div class="lib-pic">${thumb}<span class="lib-badge ${kind}">${esc(badge)}</span></div>
+        <div class="lib-pic">${thumb}<span class="lib-badge ${kind}">${esc(badge)}</span>${jobCtlBtn(f, "lib-ctl")}</div>
         <div class="lib-body">
           <div class="lib-ti">${esc(f.topic || "Untitled")}</div>
           <div class="lib-meta"><span class="lib-chan">Kinetic Studios</span> · ${esc(when)}</div>
@@ -347,9 +356,18 @@
     </div>${overlaysNoSlate()}`;
   }
   function bindLibCards() {
-    document.getElementById("lib-grid")?.querySelectorAll(".lib-card[data-id]").forEach((el) => {
+    const grid = document.getElementById("lib-grid");
+    if (!grid) return;
+    grid.querySelectorAll(".lib-card[data-id]").forEach((el) => {
       el.onclick = () => selectJob(el.dataset.id);
       el.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); selectJob(el.dataset.id); } };
+    });
+    // Stop / Continue controls — don't let the click bubble to the card (selectJob).
+    grid.querySelectorAll(".lib-ctl[data-stop]").forEach((b) => b.onclick = (e) => {
+      e.stopPropagation(); cancelJob(b.dataset.stop, b);
+    });
+    grid.querySelectorAll(".lib-ctl[data-retry]").forEach((b) => b.onclick = (e) => {
+      e.stopPropagation(); resumeJob(b.dataset.retry, b);
     });
   }
 
@@ -1109,7 +1127,12 @@
       document.getElementById("scrim")?.classList.remove("show");
       selectJob(el.dataset.id);
     });
-    // retry buttons on failed cards — stop the click bubbling to selectJob
+    // Stop / Continue controls — don't bubble to selectJob. Stop stays in the
+    // drawer (job keeps running); Continue closes it and opens the job in the lab.
+    root.querySelectorAll(".cs-retry[data-stop]").forEach((b) => b.onclick = (e) => {
+      e.stopPropagation();
+      cancelJob(b.dataset.stop, b);
+    });
     root.querySelectorAll(".cs-retry[data-retry]").forEach((b) => b.onclick = (e) => {
       e.stopPropagation();
       document.getElementById("drawer")?.classList.remove("show");
