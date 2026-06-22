@@ -1,0 +1,18 @@
+# gitleaks config — secret-leak gate. Extends the built-in rules; allowlists the
+# template/example env files (placeholders only) and docs.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "template/example/docs are placeholder-only"
+paths = [
+  '''\.env\.template$''',
+  '''\.env\.example$''',
+  '''docs/.*\.md$''',
+]
+# placeholder tokens that must never trip the scanner
+regexes = [
+  '''your-.*-key-here''',
+  '''pk_test_123''',
+  '''nvapi-\.\.\.''',
+]

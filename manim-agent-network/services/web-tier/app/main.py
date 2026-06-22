@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import analyze as analyze_mod
-from . import db, dispatch, storage
+from . import db, dispatch, metrics, storage
 from .auth import Principal, require_admin, require_user
 from .config import settings
 
@@ -131,6 +131,7 @@ def generate(payload: GenerateIn, request: Request, p: Principal = Depends(requi
     if db.count_active_jobs() >= settings.GLOBAL_CONCURRENCY_CAP:
         raise HTTPException(429, "system busy — try again shortly")
     if db.global_month_minutes(_month()) >= settings.MONTHLY_MINUTE_BUDGET:
+        metrics.emit("manim.budget.blocked")
         raise HTTPException(429, "monthly render budget reached — resets next month")
 
     job_id = str(uuid.uuid4())
@@ -139,7 +140,9 @@ def generate(payload: GenerateIn, request: Request, p: Principal = Depends(requi
     ok, code = dispatch.dispatch_render(job_id)
     if not ok and code not in (0,):  # 0 = dispatch not configured (local/dev): leave queued
         db.update_status(job_id, "failed", state={"error": f"dispatch failed (HTTP {code})"})
+        metrics.emit("manim.job.dispatch_failed", tags=[f"code:{code}"])
         raise HTTPException(502, "could not start render")
+    metrics.emit("manim.job.dispatched")
     return {"job_id": job_id, "message": "generation started"}
 
 

@@ -19,7 +19,7 @@ Spec: [`../specs/2026-06-21-deployment-hybrid-spec.md`](../specs/2026-06-21-depl
 - [ ] `git filter-repo` scrub `.env` from `ver-2.0`; delete stale `jules-*`/`feature/*` branches; force-push *(user-approved)*
 - [ ] Make repo private
 - [x] `.gitignore` already excludes `.env` (confirmed)
-- [ ] Add gitleaks pre-commit + CI gate
+- [x] gitleaks CI gate (`.github/workflows/gitleaks.yml` + `.gitleaks.toml`, full-history scan)
 
 ## M1 — Get it live, free (core)
 - [x] Web tier app — FastAPI: `/generate`, `/job`, `/jobs`, `/video`, `/analyze`, `/health`, `/admin/*` (`services/web-tier/app/`)
@@ -36,16 +36,16 @@ Spec: [`../specs/2026-06-21-deployment-hybrid-spec.md`](../specs/2026-06-21-depl
 - [x] Frontend Clerk: `clerk-auth.js` (loads clerk-js, gates sign-in, exposes `window.__authToken()`); `studio.js` `api()` attaches Bearer; `studio.html` includes it; web tier serves public `/auth-config.json` (graceful no-op when unkeyed). *(clerk-js v5 import URL to verify against live docs when keys land)*
 - [ ] `<ClerkProvider>` in React landing *(source in Downloads, outside repo — do at rebuild)*
 - [x] Wire frontend copy into web-tier image (`COPY frontend /frontend`, served same-origin)
-- [ ] Azure App Service F1 deploy manifest (web tier) + env wiring
+- [x] Azure deploy workflow (`.github/workflows/deploy-web-tier.yml` — build→ghcr→Azure Web App for Containers; app settings set in Azure, needs `AZURE_WEBAPP_*` secrets)
 - [ ] End-to-end dry run against real services *(needs keys)*
 
 ## M2 — Harden + features
 - [ ] Admin dashboard UI (job ops, analytics charts, user mgmt, cost watch) in frontend
-- [ ] `usage_minutes` accounting from runner (record runner minutes) + monthly budget gate on dispatch
-- [ ] Datadog: ddtrace in services + dd-agent on web tier + custom metrics + dashboard/monitors
-- [ ] R2 lifecycle TTL on `jobs/` prefix (10 GB ceiling)
+- [x] `usage_minutes` accounting from runner + monthly budget gate on dispatch *(Santa it.3)*
+- [x] Datadog **agentless metrics** (`metrics.py` via HTTP API; emits dispatched/dispatch_failed/budget.blocked). ⚠️ APM/tracing **deferred** — needs an Agent sidecar F1 can't host (do it when web tier runs on a VM with dd-agent)
+- [x] R2 lifecycle TTL on `jobs/` prefix (`scripts/r2_lifecycle.py`, 30-day expiry)
+- [ ] Datadog dashboard + monitors (failure-rate, job-stuck, budget) *(needs key)*
 - [ ] Variant B (long-video matrix: prep → matrix render → assemble, R2 round-trip)
-- [ ] Idempotency hardening + `workflow_dispatch` response check surfaced
 
 ## Santa Method round 1 (it.3) — NAUGHTY → fixed
 Both independent reviewers FAILED. Fixed all 5 criticals + cheap correctness:

@@ -49,5 +49,13 @@ class Settings(BaseSettings):
     # --- Frontend ---
     FRONTEND_DIR: str = "/frontend"        # served same-origin (no CORS)
 
+    # --- Datadog (agentless metrics via HTTP API; no agent needed on F1).
+    #     APM/distributed tracing needs an Agent sidecar F1 can't host -> deferred
+    #     to when the web tier runs with a sidecar (e.g. the $100 Azure VM). ---
+    DD_API_KEY: str = ""
+    DD_SITE: str = "datadoghq.com"
+    DD_SERVICE: str = "manim-web-tier"
+    DD_ENV: str = "prod"
+
 
 settings = Settings()
