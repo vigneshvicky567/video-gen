@@ -15,9 +15,18 @@
     return res.json();
   }
 
+  async function apiPost(path, body) {
+    const token = window.__authToken ? await window.__authToken() : null;
+    const headers = { "Content-Type": "application/json" };
+    if (token) headers["Authorization"] = "Bearer " + token;
+    const res = await fetch(path, { method: "POST", headers, body: JSON.stringify(body) });
+    if (!res.ok) throw new Error(res.status + " " + res.statusText);
+    return res.json();
+  }
+
   function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"]/g,
-      (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+    return String(s == null ? "" : s).replace(/[&<>"']/g,
+      (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
   const short = (id) => esc(String(id).slice(0, 8));
 
@@ -61,14 +70,32 @@
   }
 
   function usersTable(users) {
-    const rows = users.map((u) => `
+    const rows = users.map((u) => {
+      const to = u.role === "admin" ? "user" : "admin";
+      const label = u.role === "admin" ? "demote" : "make admin";
+      return `
       <tr><td>${esc(u.clerk_id)}</td><td>${esc(u.email)}</td>
           <td><span class="pill">${esc(u.role)}</span></td>
           <td>${u.job_count}</td><td>${u.month_minutes}</td>
-          <td>${u.banned ? "yes" : ""}</td></tr>`).join("");
+          <td>${u.banned ? "yes" : ""}</td>
+          <td><button class="role-btn" data-uid="${esc(u.clerk_id)}" data-to="${to}">${label}</button></td></tr>`;
+    }).join("");
     return `<h2>Users</h2><div class="wrap"><table>
-      <tr><th>clerk id</th><th>email</th><th>role</th><th>jobs</th><th>min/mo</th><th>banned</th></tr>
-      ${rows || '<tr><td colspan="6" class="muted">none</td></tr>'}</table></div>`;
+      <tr><th>clerk id</th><th>email</th><th>role</th><th>jobs</th><th>min/mo</th><th>banned</th><th></th></tr>
+      ${rows || '<tr><td colspan="7" class="muted">none</td></tr>'}</table></div>`;
+  }
+
+  async function onRoleClick(ev) {
+    const b = ev.target.closest(".role-btn");
+    if (!b) return;
+    b.disabled = true;
+    try {
+      await apiPost(`/admin/users/${encodeURIComponent(b.dataset.uid)}/role`, { role: b.dataset.to });
+      render();
+    } catch (e) {
+      alert("role change failed: " + e.message);
+      b.disabled = false;
+    }
   }
 
   async function render() {
@@ -92,6 +119,7 @@
 
   (async () => {
     await (window.__authReady || Promise.resolve());
+    el.addEventListener("click", onRoleClick);   // delegation survives innerHTML re-renders
     render();
     setInterval(render, 10000);
   })();

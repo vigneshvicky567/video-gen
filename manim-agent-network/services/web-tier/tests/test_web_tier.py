@@ -211,6 +211,25 @@ def test_admin_users_requires_admin(client, as_user):
     assert client.get("/admin/cost").status_code == 403
 
 
+def test_admin_set_role_changes(client, as_user):
+    as_user("user_a")
+    client.post("/generate", json={"topic": "x"})        # user_a now exists
+    as_user("admin_1", role="admin")
+    assert client.post("/admin/users/user_a/role", json={"role": "admin"}).status_code == 200
+    assert db.get_or_create_user("user_a")["role"] == "admin"
+
+
+def test_admin_set_role_unknown_user_404(client, as_user):
+    as_user("admin_1", role="admin")
+    assert client.post("/admin/users/ghost/role", json={"role": "user"}).status_code == 404
+
+
+def test_admin_cannot_self_demote(client, as_user):
+    as_user("admin_1", role="admin")
+    client.get("/admin/cost")                            # ensures admin_1 row exists
+    assert client.post("/admin/users/admin_1/role", json={"role": "user"}).status_code == 400
+
+
 def test_admin_cost_summary(client, as_user, monkeypatch):
     monkeypatch.setattr(settings, "MONTHLY_MINUTE_BUDGET", 1000)
     month = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m")

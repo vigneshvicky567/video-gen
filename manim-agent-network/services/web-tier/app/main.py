@@ -213,11 +213,14 @@ def admin_cost(_p: Principal = Depends(require_admin)):
 
 
 @app.post("/admin/users/{clerk_id}/role")
-def admin_set_role(clerk_id: str, payload: dict, _p: Principal = Depends(require_admin)):
+def admin_set_role(clerk_id: str, payload: dict, p: Principal = Depends(require_admin)):
     role = (payload or {}).get("role")
     if role not in ("user", "admin"):
         raise HTTPException(422, "role must be user|admin")
-    db.set_user_role(clerk_id, role)
+    if clerk_id == p.clerk_id and role != "admin":
+        raise HTTPException(400, "cannot remove your own admin role")
+    if not db.set_user_role(clerk_id, role):
+        raise HTTPException(404, "user not found")
     return {"clerk_id": clerk_id, "role": role}
 
 

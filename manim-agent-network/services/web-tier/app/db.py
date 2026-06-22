@@ -89,9 +89,11 @@ def get_or_create_user(clerk_id: str, email: str = "", role: str = "user"):
         return _row(c.execute(select(users).where(users.c.clerk_id == clerk_id)).first())
 
 
-def set_user_role(clerk_id: str, role: str):
+def set_user_role(clerk_id: str, role: str) -> int:
+    """Returns rows updated (0 if the user does not exist)."""
     with get_engine().begin() as c:
-        c.execute(update(users).where(users.c.clerk_id == clerk_id).values(role=role))
+        res = c.execute(update(users).where(users.c.clerk_id == clerk_id).values(role=role))
+        return res.rowcount or 0
 
 
 # --- jobs --------------------------------------------------------------------
