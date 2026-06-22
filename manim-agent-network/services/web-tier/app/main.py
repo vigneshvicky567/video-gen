@@ -182,11 +182,34 @@ def admin_jobs(_p: Principal = Depends(require_admin)):
 
 @app.get("/admin/analytics")
 def admin_analytics(_p: Principal = Depends(require_admin)):
-    rows = db.list_all_jobs(limit=1000)
-    by_status: dict[str, int] = {}
-    for r in rows:
-        by_status[r["status"]] = by_status.get(r["status"], 0) + 1
-    return {"total": len(rows), "by_status": by_status, "month": _month()}
+    by_status = db.jobs_status_counts()
+    used = db.global_month_minutes(_month())
+    return {
+        "total": sum(by_status.values()),
+        "by_status": by_status,
+        "month": _month(),
+        "minutes_used": used,
+        "minute_budget": settings.MONTHLY_MINUTE_BUDGET,
+    }
+
+
+@app.get("/admin/users")
+def admin_users(_p: Principal = Depends(require_admin)):
+    return db.list_users(_month())
+
+
+@app.get("/admin/cost")
+def admin_cost(_p: Principal = Depends(require_admin)):
+    used = db.global_month_minutes(_month())
+    return {
+        "month": _month(),
+        "minutes_used": used,
+        "minute_budget": settings.MONTHLY_MINUTE_BUDGET,
+        "minutes_remaining": max(0, settings.MONTHLY_MINUTE_BUDGET - used),
+        "active_jobs": db.count_active_jobs(),
+        "global_concurrency_cap": settings.GLOBAL_CONCURRENCY_CAP,
+        "daily_job_quota_default": settings.DAILY_JOB_QUOTA_DEFAULT,
+    }
 
 
 @app.post("/admin/users/{clerk_id}/role")

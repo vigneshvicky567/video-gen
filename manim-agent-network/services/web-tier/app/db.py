@@ -192,6 +192,32 @@ def global_month_minutes(month: str) -> int:
     return int(v or 0)
 
 
+# --- admin analytics ---------------------------------------------------------
+def jobs_status_counts() -> dict:
+    """{status: count} over all jobs — single GROUP BY (cheap)."""
+    with get_engine().connect() as c:
+        rows = c.execute(select(jobs.c.status, func.count()).group_by(jobs.c.status)).all()
+    return {s: int(n) for s, n in rows}
+
+
+def list_users(month: str, limit: int = 200):
+    """Users enriched with lifetime job count + this-month runner minutes."""
+    with get_engine().connect() as c:
+        urows = c.execute(select(users).limit(limit)).all()
+        jc = dict(c.execute(
+            select(jobs.c.owner_user_id, func.count()).group_by(jobs.c.owner_user_id)).all())
+        mm = dict(c.execute(
+            select(usage_minutes.c.owner_user_id, usage_minutes.c.runner_minutes)
+            .where(usage_minutes.c.month == month)).all())
+    out = []
+    for r in urows:
+        d = _row(r)
+        d["job_count"] = int(jc.get(d["clerk_id"], 0))
+        d["month_minutes"] = int(mm.get(d["clerk_id"], 0))
+        out.append(d)
+    return out
+
+
 def add_usage(owner, month, minutes, jobs_count=1):
     with get_engine().begin() as c:
         row = c.execute(select(usage_minutes).where(and_(

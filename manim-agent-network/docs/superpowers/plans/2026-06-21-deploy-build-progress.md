@@ -40,7 +40,8 @@ Spec: [`../specs/2026-06-21-deployment-hybrid-spec.md`](../specs/2026-06-21-depl
 - [ ] End-to-end dry run against real services *(needs keys)*
 
 ## M2 — Harden + features
-- [ ] Admin dashboard UI (job ops, analytics charts, user mgmt, cost watch) in frontend
+- [x] Admin backend: `/admin/jobs`, `/admin/analytics` (status counts + month minutes vs budget), `/admin/users` (job counts + month minutes), `/admin/cost` (budget/active/quota), `/admin/users/{id}/role` — all `require_admin`, tested
+- [x] Admin dashboard UI (`frontend/admin.html` + `admin.js`): cost cards, status breakdown bars, jobs + users tables, Clerk-gated, 10s refresh, no chart lib *(needs browser verify when keys land)*
 - [x] `usage_minutes` accounting from runner + monthly budget gate on dispatch *(Santa it.3)*
 - [x] Datadog **agentless metrics** (`metrics.py` via HTTP API; emits dispatched/dispatch_failed/budget.blocked). ⚠️ APM/tracing **deferred** — needs an Agent sidecar F1 can't host (do it when web tier runs on a VM with dd-agent)
 - [x] R2 lifecycle TTL on `jobs/` prefix (`scripts/r2_lifecycle.py`, 30-day expiry)

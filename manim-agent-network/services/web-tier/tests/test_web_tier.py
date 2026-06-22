@@ -193,6 +193,34 @@ def test_admin_analytics_counts(client, as_user):
     client.post("/generate", json={"topic": "x"})
     data = client.get("/admin/analytics").json()
     assert data["total"] >= 1 and "queued" in data["by_status"]
+    assert data["minute_budget"] == settings.MONTHLY_MINUTE_BUDGET and "minutes_used" in data
+
+
+def test_admin_users_lists_with_counts(client, as_user):
+    as_user("user_a")
+    client.post("/generate", json={"topic": "a job"})
+    as_user("admin_1", role="admin")
+    users = client.get("/admin/users").json()
+    ua = next((u for u in users if u["clerk_id"] == "user_a"), None)
+    assert ua and ua["job_count"] >= 1 and "month_minutes" in ua
+
+
+def test_admin_users_requires_admin(client, as_user):
+    as_user("user_a", role="user")
+    assert client.get("/admin/users").status_code == 403
+    assert client.get("/admin/cost").status_code == 403
+
+
+def test_admin_cost_summary(client, as_user, monkeypatch):
+    monkeypatch.setattr(settings, "MONTHLY_MINUTE_BUDGET", 1000)
+    month = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m")
+    db.get_or_create_user("user_a")
+    db.add_usage("user_a", month, 250)
+    as_user("admin_1", role="admin")
+    cost = client.get("/admin/cost").json()
+    assert cost["minutes_used"] == 250
+    assert cost["minutes_remaining"] == 750
+    assert cost["minute_budget"] == 1000 and "active_jobs" in cost
 
 
 # --- presign determinism (money/security path) -------------------------------

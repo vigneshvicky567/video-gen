@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin · Manim Agent Network</title>
+  <link rel="icon" type="image/png" href="assets/favicon.png" />
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0b0f17; color: #e2e8f0;
+           font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; }
+    main { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .muted { color: #94a3b8; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+             gap: 12px; margin: 18px 0; }
+    .card { background: #131a26; border: 1px solid #1f2a3a; border-radius: 10px; padding: 14px; }
+    .card .n { font-size: 24px; font-weight: 700; }
+    .card .l { color: #94a3b8; font-size: 12px; }
+    .bar { height: 8px; background: #1f2a3a; border-radius: 6px; overflow: hidden; margin-top: 8px; }
+    .bar > i { display: block; height: 100%; background: linear-gradient(90deg,#22d3ee,#34d399); }
+    table { width: 100%; border-collapse: collapse; margin: 10px 0 26px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #1f2a3a; font-size: 13px; }
+    th { color: #94a3b8; font-weight: 600; }
+    .pill { padding: 1px 8px; border-radius: 999px; font-size: 11px; background: #1f2a3a; }
+    .pill.done { background: #14532d; } .pill.failed { background: #4c1d24; }
+    .pill.running, .pill.queued { background: #1e3a5f; }
+    .wrap { overflow-x: auto; }
+    .warn { color: #f59e0b; }
+  </style>
+</head>
+<body>
+  <main id="app"><p class="muted">Loading…</p></main>
+  <script src="js/clerk-auth.js?v=clerk1"></script>
+  <script src="js/admin.js?v=admin1"></script>
+</body>
+</html>
