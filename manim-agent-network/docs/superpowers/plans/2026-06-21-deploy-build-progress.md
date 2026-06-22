@@ -10,7 +10,7 @@ Spec: [`../specs/2026-06-21-deployment-hybrid-spec.md`](../specs/2026-06-21-depl
 4. **`/analyze` reimplemented in the web tier** (synchronous NIM). Web tier holds `NVIDIA_API_KEY` (only place).
 5. **Variant A first**; Variant B (long-video matrix) sequenced later.
 6. **Staleness sweep** marks stuck `queued` jobs failed; dispatch failure → job failed + 502.
-7. **Datadog** on the always-on web tier (agent + ddtrace); runners ship metrics/logs agentless.
+7. **Datadog** — ~~agent + ddtrace on the web tier~~ **superseded** (see M2 below): Azure F1 can't host an Agent sidecar, so the web tier ships **agentless metrics via the HTTP API**; APM/tracing deferred until the web tier runs with a sidecar.
 8. Timeout ladder: app 20000s < watchdog 20400s < workflow 350min < GH cap 360min.
 9. Non-negotiable free tier: **Neon + Clerk + Datadog**. Actions spend limit **$0**, Azure **F1**, R2 zero-egress.
 
