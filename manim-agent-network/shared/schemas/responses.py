@@ -29,6 +29,9 @@ class VoiceoverResponse(BaseModel):
 
 class AssemblerResponse(BaseModel):
     final_output_path: str
+    # Length of the prepended branded intro (0.0 when no intro asset). The
+    # frontend offsets every transcript seek time by this (see TRN-005).
+    intro_duration_seconds: float = 0.0
 
 class ImageFetcherResponse(BaseModel):
     image_paths: Dict[int, List[str]]

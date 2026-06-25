@@ -202,6 +202,7 @@ services:
       - "8005"
     volumes:
       - ./workspace:/workspace
+      - ./assets:/assets:ro          # intro.mp4 / outro.mp4 / music.mp3 (read-only)
     environment:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
       - NVIDIA_API_KEYS=${NVIDIA_API_KEYS:-}
@@ -213,6 +214,12 @@ services:
       - COMPOSITOR_CHUNK_MAX_SECONDS=${COMPOSITOR_CHUNK_MAX_SECONDS:-180}
       - COMPOSITOR_CHUNK_TIMEOUT_MAX_SECONDS=${COMPOSITOR_CHUNK_TIMEOUT_MAX_SECONDS:-3600}
       - SERVICE_HTTP_TIMEOUT_SECONDS=${SERVICE_HTTP_TIMEOUT_SECONDS:-900}
+      # Final-cut polish (empty = off). Drop assets in ./assets and set these.
+      - INTRO_VIDEO_PATH=${INTRO_VIDEO_PATH:-}
+      - OUTRO_VIDEO_PATH=${OUTRO_VIDEO_PATH:-}
+      - BG_MUSIC_PATH=${BG_MUSIC_PATH:-}
+      - BG_MUSIC_VOLUME=${BG_MUSIC_VOLUME:-0.12}
+      - BG_MUSIC_FADEOUT_SECONDS=${BG_MUSIC_FADEOUT_SECONDS:-2.0}
     depends_on:
       - base
 

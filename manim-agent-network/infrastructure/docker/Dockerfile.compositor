@@ -31,12 +31,41 @@ RUN apt-get update && \
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV CHROME_BIN=/usr/bin/chromium
 
+# Optimized capture path: chrome-headless-shell supports HeadlessExperimental.beginFrame,
+# which HyperFrames uses for fast deterministic frame capture. Regular Chromium lacks it,
+# so the renderer falls back to slow screenshot-per-frame mode (observed ~10x slower:
+# ~50 min vs ~5 min per chunk). Reuses Chromium's already-installed system libs.
+# npx is unavailable in this image (npm internals not copied from the node stage), so
+# download the Chrome-for-Testing build DIRECTLY (python resolves the stable linux64 URL).
+# NON-FATAL: any failure leaves no binary and start.sh falls back to system Chromium.
+RUN apt-get update && apt-get install -y --no-install-recommends curl unzip ca-certificates && rm -rf /var/lib/apt/lists/* ; \
+    ( CHS_URL=$(python -c "import json,urllib.request as u; d=json.load(u.urlopen('https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json')); print([x['url'] for x in d['channels']['Stable']['downloads']['chrome-headless-shell'] if x['platform']=='linux64'][0])") \
+      && echo "CHS_URL=$CHS_URL" \
+      && curl -fsSL "$CHS_URL" -o /tmp/chs.zip \
+      && unzip -q /tmp/chs.zip -d /opt/chs && rm /tmp/chs.zip \
+      && ln -sf "$(find /opt/chs -type f -name chrome-headless-shell | head -1)" /usr/local/bin/chrome-headless-shell \
+      && /usr/local/bin/chrome-headless-shell --version ) \
+    || echo "WARN: chrome-headless-shell install failed; using system chromium fallback"
+
 # ffmpeg/ffprobe are already present in base-manim-agent; ensure they are available
 RUN ffprobe -version > /dev/null 2>&1 || (apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*)
 
 COPY shared/ /app/shared/
 COPY services/compositor/ /app/
 
+# Entrypoint: use chrome-headless-shell (fast path) when present, else fall back to
+# system Chromium (slow but works). Keeps renders working even if the optimized
+# browser failed to install.
+RUN printf '#!/bin/sh\n\
+if [ -x /usr/local/bin/chrome-headless-shell ]; then\n\
+  export HYPERFRAMES_BROWSER_PATH=/usr/local/bin/chrome-headless-shell\n\
+  echo "[compositor] render: chrome-headless-shell (optimized beginFrame path)"\n\
+else\n\
+  echo "[compositor] render: system chromium fallback (slow screenshot path)"\n\
+fi\n\
+exec uvicorn app.main:app --host 0.0.0.0 --port 8005\n' > /app/start.sh \
+    && chmod +x /app/start.sh
+
 EXPOSE 8005
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8005"]
+CMD ["/app/start.sh"]

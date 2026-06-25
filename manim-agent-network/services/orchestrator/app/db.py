@@ -195,6 +195,13 @@ class JobDatabase:
             """, (json.dumps(state), job_id))
             conn.commit()
 
+    def delete_job(self, job_id: str) -> bool:
+        """Hard-delete a single job row. Returns True if a row was removed."""
+        with self._get_connection() as conn:
+            cursor = conn.execute("DELETE FROM jobs WHERE job_id = ?", (job_id,))
+            conn.commit()
+        return cursor.rowcount > 0
+
     def delete_old_jobs(self, days: int = 7):
         """Delete jobs older than specified days."""
         with self._get_connection() as conn:

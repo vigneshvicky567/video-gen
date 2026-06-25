@@ -212,10 +212,12 @@
       const kind = f.status === "completed" ? "ready" : (f.status === "failed" || f.status === "cancelled") ? "fail" : "render";
       const badge = f.status === "completed" ? "Ready" : f.status === "failed" ? "Failed" : f.status === "cancelled" ? "Stopped" : "Rendering";
       const meta = `${chipText(f.status)} · ${timeAgo(parseUtc(f.created_at))}`;
+      const csDel = !RUNNING.has(f.status)
+        ? `<button class="cs-del" data-del="${f.job_id}" title="Delete">✕</button>` : "";
       return `<div class="cs ${f.job_id === selectedId ? "on" : ""}" data-id="${f.job_id}">
         <div class="ti">${esc(f.topic)}</div>
         <div class="ti-meta">${esc(meta)}</div>
-        <span class="bd bd-${kind}">${badge}</span>${jobCtlBtn(f, "cs-retry")}
+        <span class="bd bd-${kind}">${badge}</span>${jobCtlBtn(f, "cs-retry")}${csDel}
       </div>`;
     }).join("");
   }
@@ -227,19 +229,11 @@
     </div>`;
   }
 
-  function clipModal() {
-    return `<div class="clip-scrim" id="clip-scrim">
-      <div class="clip">
-        <div class="ch"><span id="clip-title">Scene</span><button class="x" id="clip-x" aria-label="Close">×</button></div>
-        <video id="clip-video" controls playsinline></video>
-      </div>
-    </div>`;
-  }
 
   function setupOverlay() {
     return `<div class="setup-scrim" id="setup-scrim">
       <div class="setup" role="dialog" aria-modal="true" aria-label="Set up the shot">
-        <div class="clap-row"><span class="slate-icon"></span><span class="eye">Set up the shot</span></div>
+        <div class="clap-row"><span class="slate-icon"></span><span class="eye">Set up the shot</span><button class="x setup-x" id="setup-x" aria-label="Close">×</button></div>
         <h2>Before we roll</h2>
         <p class="said">Filming: <b id="setup-prompt">${esc(setupPrompt || "your idea")}</b></p>
 
@@ -270,7 +264,7 @@
     </div>`;
   }
 
-  const overlaysNoSlate = () => `${drawer()}${setupOverlay()}${clipModal()}`;
+  const overlaysNoSlate = () => `${drawer()}${setupOverlay()}`;
   const overlays = () => `${slate()}${overlaysNoSlate()}`;
 
   /* ════════ HOME ════════ */
@@ -328,8 +322,10 @@
       const thumb = done
         ? `<video class="lib-thumb" src="/video/${f.job_id}#t=1" preload="metadata" muted playsinline></video>`
         : `<div class="lib-thumb ph ${kind}">${failed ? "⚠" : ""}</div>`;
+      const delBtn = !RUNNING.has(f.status)
+        ? `<button class="lib-del" data-del="${f.job_id}" title="Delete this film">✕</button>` : "";
       return `<article class="lib-card ${kind}" data-id="${f.job_id}" tabindex="0" title="${esc(f.topic)}">
-        <div class="lib-pic">${thumb}<span class="lib-badge ${kind}">${esc(badge)}</span>${jobCtlBtn(f, "lib-ctl")}</div>
+        <div class="lib-pic">${thumb}<span class="lib-badge ${kind}">${esc(badge)}</span>${jobCtlBtn(f, "lib-ctl")}${delBtn}</div>
         <div class="lib-body">
           <div class="lib-ti">${esc(f.topic || "Untitled")}</div>
           <div class="lib-meta"><span class="lib-chan">Kinetic Studios</span> · ${esc(when)}</div>
@@ -372,6 +368,9 @@
     });
     grid.querySelectorAll(".lib-ctl[data-retry]").forEach((b) => b.onclick = (e) => {
       e.stopPropagation(); resumeJob(b.dataset.retry, b);
+    });
+    grid.querySelectorAll(".lib-del[data-del]").forEach((b) => b.onclick = (e) => {
+      e.stopPropagation(); deleteJob(b.dataset.del, b);
     });
   }
 
@@ -437,6 +436,8 @@
           <div class="frames">${scenes.map((s, i) => frameHtml(s, st, i)).join("")}</div>
         </div>
       </div>
+
+      ${transcriptHtml(st)}
 
       <div class="log">
         <div class="h"><span class="l"></span><span class="t">On set</span></div>
@@ -584,6 +585,69 @@
         <div class="fr"><span class="ok">${SCENE_LABEL[state]}</span><span class="du">${s.estimated_duration_seconds ?? "–"}s</span></div>
       </div>
     </div>`;
+  }
+
+  // Live transcript for the cut view. Scene start = cumulative sum of prior
+  // estimated_duration_seconds (matches the filmstrip seek), shifted by the
+  // intro length (TRN-005) so seeks land on the right spoken words in the final
+  // MP4. When audio_segments[sid] exists, each sentence gets its own seek time;
+  // otherwise the whole scene narration is one row. data-t (seconds) drives both
+  // click-seek and the timeupdate highlight (wired in wire()).
+  function transcriptHtml(st) {
+    const scenes = st.script?.scenes || [];
+    if (!scenes.length) return "";
+    const offset = parseFloat(st.intro_duration_seconds) || 0;
+    const segs = st.audio_segments || {};
+    let acc = 0;
+    const rows = [];
+    scenes.forEach((s) => {
+      const sid = String(s.scene_id);
+      const sceneStart = acc + offset;
+      const title = s.title || `Scene ${sid}`;
+      rows.push(`<button class="tr-row tr-scene" data-t="${sceneStart.toFixed(2)}">
+        <span class="tr-tc">${fmtDur(sceneStart)}</span><span class="tr-tx"><b>${esc(title)}</b></span></button>`);
+      const sentences = segs[sid];
+      if (Array.isArray(sentences) && sentences.length) {
+        sentences.forEach((seg) => {
+          const t = sceneStart + (parseFloat(seg.start) || 0);
+          rows.push(`<button class="tr-row tr-line" data-t="${t.toFixed(2)}">
+            <span class="tr-tc">${fmtDur(t)}</span><span class="tr-tx">${esc(seg.text || "")}</span></button>`);
+        });
+      } else if ((s.narration_text || "").trim()) {
+        rows.push(`<button class="tr-row tr-line" data-t="${sceneStart.toFixed(2)}">
+          <span class="tr-tc"></span><span class="tr-tx">${esc(s.narration_text)}</span></button>`);
+      }
+      acc += parseFloat(s.estimated_duration_seconds) || 0;
+    });
+    return `<div class="transcript">
+      <div class="strip-label">Transcript <span class="ct">· click any line to jump</span></div>
+      <div class="tr-list" id="tr-list">${rows.join("")}</div>
+    </div>`;
+  }
+
+  function bindTranscript() {
+    const trList = document.getElementById("tr-list");
+    if (!trList) return;
+    const vidEl = () => document.querySelector("#screen video");
+    const rows = [...trList.querySelectorAll(".tr-row")];
+    rows.forEach((r) => r.onclick = () => {
+      const v = vidEl(); if (!v) return;
+      try { v.currentTime = parseFloat(r.dataset.t) || 0; v.play().catch(() => {}); } catch (e) {}
+    });
+    const v = vidEl();
+    if (v && !v.__trBound) {
+      v.__trBound = true;
+      v.addEventListener("timeupdate", () => {
+        const ct = v.currentTime;
+        let active = null;
+        for (const r of rows) { if ((parseFloat(r.dataset.t) || 0) <= ct + 0.01) active = r; else break; }
+        if (active && !active.classList.contains("on")) {
+          rows.forEach((x) => x.classList.remove("on"));
+          active.classList.add("on");
+          active.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        }
+      });
+    }
   }
 
   function synthCutLog(st) {
@@ -1105,16 +1169,15 @@
       try { vid.currentTime = start; vid.play().catch(() => {}); } catch (e) {}
     });
 
+    // live transcript (cut view): click-seek + playhead highlight
+    bindTranscript();
+
     // copy job id (lab)
     const jid = document.getElementById("jobid");
     if (jid && jobState) jid.onclick = async () => {
       try { await navigator.clipboard.writeText(jobState.job_id || ""); const old = jid.textContent; jid.textContent = "copied ✓"; setTimeout(() => jid.textContent = old, 1200); } catch {}
     };
 
-    // clip modal
-    const cs = document.getElementById("clip-scrim"), cx = document.getElementById("clip-x");
-    if (cs) cs.onclick = (e) => { if (e.target === cs) closeClip(); };
-    if (cx) cx.onclick = closeClip;
 
     // retry/resume a failed job from the lab error bar
     const rb = document.getElementById("retry-btn");
@@ -1143,21 +1206,12 @@
       document.getElementById("scrim")?.classList.remove("show");
       resumeJob(b.dataset.retry, b);
     });
+    root.querySelectorAll(".cs-del[data-del]").forEach((b) => b.onclick = (e) => {
+      e.stopPropagation();
+      deleteJob(b.dataset.del, b);
+    });
   }
 
-  /* ── clip modal ── */
-  function openClip(title, src) {
-    const cs = document.getElementById("clip-scrim"), v = document.getElementById("clip-video"), t = document.getElementById("clip-title");
-    if (!cs || !v) return;
-    if (t) t.textContent = title;
-    v.src = src; cs.classList.add("show");
-  }
-  function closeClip() {
-    const cs = document.getElementById("clip-scrim"), v = document.getElementById("clip-video");
-    if (!cs) return;
-    cs.classList.remove("show");
-    if (v) { v.pause(); v.removeAttribute("src"); v.load(); }
-  }
 
   /* ════════ navigation ════════ */
   function latestByStatus(pred) { return jobs.find((j) => pred(j.status))?.job_id || null; }
@@ -1317,6 +1371,7 @@
     const scrim = document.getElementById("setup-scrim");
     if (!scrim) return;
     scrim.onclick = (e) => { if (e.target === scrim) closeSetup(); };
+    const sx = document.getElementById("setup-x"); if (sx) sx.onclick = closeSetup;
     const retry = document.getElementById("setup-retry"); if (retry) retry.onclick = runAnalysis;
     const direct = document.getElementById("setup-direct"); if (direct) direct.onclick = () => startRender(null);
     const skip = document.getElementById("setup-skip"); if (skip) skip.onclick = () => startRender(buildBrief());
@@ -1325,7 +1380,6 @@
   }
   function escClose(e) {
     if (e.key !== "Escape") return;
-    if (document.getElementById("clip-scrim")?.classList.contains("show")) { closeClip(); return; }
     if (setupOpen) closeSetup();
   }
 
@@ -1382,6 +1436,21 @@
     } catch (e) {
       alert(`Could not resume: ${e.message}`);
       if (btn) { btn.disabled = false; btn.textContent = "↻ Retry"; }
+    }
+  }
+
+  async function deleteJob(jobId, btn) {
+    if (!jobId) return;
+    if (!confirm("Delete this film? This cannot be undone.")) return;
+    if (btn) btn.disabled = true;
+    try {
+      await api(`/job/${jobId}`, { method: "DELETE" });
+      if (selectedId === jobId) { selectedId = null; jobState = null; view = "home"; mountKey = null; }
+      await pollJobs();
+      ensureMounted();
+    } catch (e) {
+      alert(`Could not delete: ${e.message}`);
+      if (btn) btn.disabled = false;
     }
   }
 

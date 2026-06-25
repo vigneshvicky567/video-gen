@@ -32,4 +32,7 @@ class LangGraphState(TypedDict):
     job_style: Optional[dict]
 
     final_output_path: Optional[str]
+    # Length of the prepended branded intro (0.0 / absent when no intro asset);
+    # frontend transcript offsets seek times by this (TRN-005).
+    intro_duration_seconds: float
     overall_error: Optional[str]

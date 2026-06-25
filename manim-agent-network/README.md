@@ -1,7 +1,9 @@
-<!-- intro animation authored in this repo's own HyperFrames stack — assets/intro/index.html -->
+<!-- 30-second product walkthrough hero — exported from this repo's own HyperFrames stack -->
 <div align="center">
 
-<img src="assets/intro.gif" alt="Manim Agent Network — a network of AI agents turns one topic into a narrated, animated explainer" width="100%">
+<a href="assets/kinetic-explainer.mp4"><img src="assets/explainer.gif" alt="Manim Agent Network — one sentence becomes a fully narrated, animated explainer film, built by a swarm of seven AI agents" width="100%"></a>
+
+<sub><strong>↑ 30-second walkthrough</strong> · <a href="assets/kinetic-explainer.mp4">watch the full-resolution MP4 →</a></sub>
 
 <h1>🎬 Manim Agent Network</h1>
 
@@ -93,7 +95,7 @@ Each scene is one of two kinds:
 - **Manim** scenes — mathematical/diagrammatic animations rendered by [Manim CE](https://manim.community/) (720p30 landscape).
 - **HyperFrames** scenes — HTML/CSS/GSAP motion-graphics (titles, bullets, concept cards), rendered headless.
 
-The **Compositor** stitches every scene, its narration, and timed captions into a single HyperFrames timeline and renders the final cut. *(The intro at the top of this README was authored in that same HyperFrames stack — source in [`assets/intro/`](assets/intro/index.html).)*
+The **Compositor** stitches every scene, its narration, and timed captions into a single HyperFrames timeline and renders the final cut. *(The walkthrough at the top of this README was authored in that same HyperFrames stack — source in [`assets/intro/`](assets/intro/index.html).)*
 
 ---
 
@@ -418,7 +420,7 @@ manim-agent-network/
 ├── frontend/                       # Static SPA (landing + studio), served by orchestrator
 ├── docs/                           # Debugging write-ups + QA reports
 ├── tests/                          # 118-test pytest suite
-├── assets/                         # intro.gif, pipeline/shot screenshots, intro/ source
+├── assets/                         # explainer.gif/.mp4 walkthrough, intro.gif, screenshots, intro/ source
 ├── docker-compose.yml              # 7-service fleet + shared workspace volume
 ├── Makefile                        # build / run / logs targets
 └── README.md

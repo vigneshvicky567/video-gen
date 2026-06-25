@@ -473,6 +473,7 @@ async def assembler_node(state: LangGraphState):
             timeout=assembler_http_timeout_s(planned_total),
         )
         return {"final_output_path": res["final_output_path"],
+                "intro_duration_seconds": res.get("intro_duration_seconds", 0.0),
                 "dropped_scenes": dropped_scenes, "status": "completed"}
     except Exception as e:
         logger.error(f"Assembler failed: {e}")

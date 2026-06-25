@@ -22,6 +22,7 @@ from .duration_prober import compute_scene_timings, probe_duration, freeze_pad_r
 from .llm_composer import compose_html
 from .html_validator import validate_composition
 from .chunking import partition_timings, rebase_chunk, slot_seconds
+from .postprocess import finalize_film
 
 # Overridable for host-side testing; the Docker image installs hyperframes here.
 HYPERFRAMES_CLI = os.getenv(
@@ -303,10 +304,18 @@ async def assemble(request: AssemblerRequest):
             logger.info("Long composition -> chunked render", extra={"total_s": round(total_s, 1)})
             await _assemble_chunked(request, scene_timings, comp_dir, output_path)
 
+        # Final-cut polish: music bed + intro/outro concat (no-op if no assets).
+        # Mutates output_path in place, so final_output_path stays stable.
+        intro_seconds = 0.0
+        with timed_block(logger, "final-cut polish (music/intro/outro)"):
+            _, intro_seconds = finalize_film(output_path, comp_dir / "polish")
+
         log_file(logger, "output", str(output_path))
         logger.info("Assembly complete", extra={"output": str(output_path),
-                                                 "size_bytes": output_path.stat().st_size})
-        return AssemblerResponse(final_output_path=str(output_path))
+                                                 "size_bytes": output_path.stat().st_size,
+                                                 "intro_s": intro_seconds})
+        return AssemblerResponse(final_output_path=str(output_path),
+                                 intro_duration_seconds=intro_seconds)
 
     except AssemblyError as e:
         logger.error(f"AssemblyError: {e}")

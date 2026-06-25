@@ -246,6 +246,18 @@ async def cancel_job(job_id: str):
     return {"job_id": job_id, "message": "Stop requested."}
 
 
+@app.delete("/job/{job_id}", response_model=dict)
+async def delete_job(job_id: str):
+    """Hard-delete a job record. Refuses if the job is actively running."""
+    state = db.get_job(job_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if job_id in _DRIVING:
+        raise HTTPException(status_code=409, detail="Job is running; stop it first")
+    db.delete_job(job_id)
+    return {"job_id": job_id, "message": "Deleted."}
+
+
 @app.post("/job/{job_id}/resume", response_model=dict)
 async def resume_job(job_id: str, background_tasks: BackgroundTasks):
     """Re-run a failed/stalled job from its persisted state.
@@ -264,7 +276,8 @@ async def resume_job(job_id: str, background_tasks: BackgroundTasks):
     if job_id in _DRIVING:
         raise HTTPException(status_code=409, detail="Job is already running")
     if state.get("status") not in ("failed", "cancelled", "starting", "pending", "code_generation",
-                                   "validation", "voiceover_and_images", "assembly", "script_generation"):
+                                   "image_fetch", "voiceover", "validation", "voiceover_and_images",
+                                   "assembly", "script_generation"):
         raise HTTPException(status_code=409, detail=f"Job is {state.get('status')}; cannot resume")
 
     state.pop("webhook_url", None)

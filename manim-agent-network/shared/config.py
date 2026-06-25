@@ -93,6 +93,15 @@ class Settings(BaseSettings):
     COMPOSITOR_CHUNK_MAX_SECONDS: float = float(os.getenv("COMPOSITOR_CHUNK_MAX_SECONDS", "300"))
     COMPOSITOR_CHUNK_TIMEOUT_MAX_SECONDS: float = float(os.getenv("COMPOSITOR_CHUNK_TIMEOUT_MAX_SECONDS", "3600"))
 
+    # ── Final-cut polish: intro/outro concat + music bed (assemble-time ffmpeg) ──
+    # Paths point at the read-only /assets mount. Empty = feature off (output is
+    # byte-for-byte today's behavior). See spec/spec-design-intro-music-transcript.md.
+    INTRO_VIDEO_PATH: str = os.getenv("INTRO_VIDEO_PATH", "")
+    OUTRO_VIDEO_PATH: str = os.getenv("OUTRO_VIDEO_PATH", "")
+    BG_MUSIC_PATH: str = os.getenv("BG_MUSIC_PATH", "")
+    BG_MUSIC_VOLUME: float = float(os.getenv("BG_MUSIC_VOLUME", "0.12"))
+    BG_MUSIC_FADEOUT_SECONDS: float = float(os.getenv("BG_MUSIC_FADEOUT_SECONDS", "2.0"))
+
     # ── Service URLs (Docker internal) ────────────────────────────────────────
     SCRIPT_WRITER_URL: str = os.getenv("SCRIPT_WRITER_URL", "http://script-writer:8001")
     CODE_GENERATOR_URL: str = os.getenv("CODE_GENERATOR_URL", "http://code-generator:8002")

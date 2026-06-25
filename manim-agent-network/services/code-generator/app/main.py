@@ -173,7 +173,8 @@ Visual baseline (override with explicit user-supplied palette when given):
   your value TO the element's CURRENT (CSS) value — if CSS already pins it at 0 the
   tween is 0→0 and the element STAYS INVISIBLE FOR THE WHOLE SCENE (blank screen).
   Rule: elements revealed via `gsap.from(...)` MUST keep their natural visible CSS
-  (no opacity/visibility hiding) — `from()` supplies the hidden start itself and
+  (no opacity/visibility hiding, neither in a `<style>` rule NOR an inline
+  `style="opacity:0"` attribute) — `from()` supplies the hidden start itself and
   reveals to the real value. ONLY hide in CSS when you reveal with `gsap.to(el,
   {opacity:1})` instead. Never both. When unsure, use `gsap.from()` + visible CSS.
 - CONTRAST: on-screen text must hit WCAG 4.5:1 against whatever is behind it.
@@ -247,13 +248,19 @@ def _cue_sheet(audio_cues, kind: str) -> str:
     if not audio_cues:
         return ""
     rows = []
-    for i, c in enumerate(audio_cues, 1):
+    i = 0
+    for c in audio_cues:
+        if not isinstance(c, dict):
+            continue  # cues come from the voiceover service unvalidated
+        i += 1
         s = float(c.get("start", 0) or 0)
         d = float(c.get("duration", 0) or 0)
         txt = (c.get("text") or "").strip().replace("\n", " ")
         rows.append(f'  beat {i} @ {s:.1f}s (spoken {d:.1f}s): "{txt}"')
+    if not rows:
+        return ""
     table = "\n".join(rows)
-    last = audio_cues[-1]
+    last = [c for c in audio_cues if isinstance(c, dict)][-1]
     total = round(float(last.get("start", 0) or 0) + float(last.get("duration", 0) or 0), 1)
     if kind == "hf":
         how = ("Put each beat on the GSAP timeline at its cue start via the absolute position "
@@ -386,23 +393,43 @@ def _extract_html(text: str) -> str:
 _OPACITY0_RE = re.compile(r"opacity\s*:\s*0(?:\.0+)?\s*(;|(?=\}))", re.IGNORECASE)
 _VIS_HIDDEN_RE = re.compile(r"visibility\s*:\s*hidden\s*(;|(?=\}))", re.IGNORECASE)
 _STYLE_BLOCK_RE = re.compile(r"(<style[^>]*>)(.*?)(</style>)", re.IGNORECASE | re.DOTALL)
+# gsap.from(...) / fromTo(...) calls whose first arg is a quoted selector.
+_FROM_CALL_RE = re.compile(r"""\.(?:from|fromTo)\s*\(\s*(['"])(.*?)\1\s*,\s*\{(.*?)\}""", re.DOTALL)
+_SEL_TOKEN_RE = re.compile(r"[#.][\w-]+")
+_HID_IN_ARGS_RE = re.compile(r"(?:opacity|autoAlpha)\s*:\s*0(?![.\d])", re.IGNORECASE)
 
 
 def _unhide_css(html: str) -> str:
-    """Strip `opacity:0` / `visibility:hidden` from CSS RULE blocks only.
+    """Fix the gsap.from() 0->0 invisible trap WITHOUT breaking gsap.to() reveals.
 
-    The #1 render-killer: the LLM pins an element hidden in CSS (opacity:0) AND
-    animates it in with gsap.from({opacity:0}). `from` tweens FROM the given value
-    TO the element's CURRENT (CSS) value — 0 -> 0 — so it stays invisible forever
-    (blank screens, no visible text). gsap.from's immediateRender already supplies
-    the hidden start state and reveals to the true value, so the CSS hide is both
-    redundant and the bug. We scrub it ONLY inside <style> (never inside the GSAP
-    JS, where `opacity:0`/`autoAlpha:0` are correct tween args)."""
-    def scrub(m: "re.Match") -> str:
-        body = _OPACITY0_RE.sub("", m.group(2))
-        body = _VIS_HIDDEN_RE.sub("", body)
-        return m.group(1) + body + m.group(3)
-    return _STYLE_BLOCK_RE.sub(scrub, html)
+    The render-killer: an element pinned `opacity:0` in CSS AND revealed with
+    gsap.from({opacity:0}) — `from` tweens FROM 0 TO the element's CURRENT (CSS)
+    value, also 0, so it stays invisible (blank screen). But elements revealed with
+    gsap.to({opacity:1}) CORRECTLY start hidden in CSS, and CSS @keyframes use
+    opacity:0 legitimately — so a blanket strip breaks those. We therefore strip
+    `opacity:0`/`visibility:hidden` ONLY from CSS rules whose selector is a
+    from()/fromTo() opacity-0 target. @keyframes/@media survive automatically because
+    the rule regex forbids nested braces. The GSAP <script> is never touched.
+    (Known gap: inline style="opacity:0" attributes are not scrubbed — the system
+    prompt forbids hiding animated elements that way.)"""
+    targets = set()
+    for m in _FROM_CALL_RE.finditer(html):
+        if _HID_IN_ARGS_RE.search(m.group(3)):
+            targets.update(_SEL_TOKEN_RE.findall(m.group(2)))
+    if not targets:
+        return html
+    # `tok(?![\w-])` so `.title` doesn't match an unrelated `.title-bar` rule.
+    sel_alt = "|".join(re.escape(t) + r"(?![\w-])" for t in targets)
+    rule_re = re.compile(r"([^{}]*(?:" + sel_alt + r")[^{}]*)\{([^{}]*)\}")
+
+    def fix_rule(rm: "re.Match") -> str:
+        body = _VIS_HIDDEN_RE.sub("", _OPACITY0_RE.sub("", rm.group(2)))
+        return rm.group(1) + "{" + body + "}"
+
+    def fix_style(sm: "re.Match") -> str:
+        return sm.group(1) + rule_re.sub(fix_rule, sm.group(2)) + sm.group(3)
+
+    return _STYLE_BLOCK_RE.sub(fix_style, html)
 
 
 async def _generate_hyperframes(request):
