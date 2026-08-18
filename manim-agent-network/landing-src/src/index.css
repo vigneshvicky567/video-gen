@@ -1,0 +1,30 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..700;1,9..144,400..700&family=Space+Grotesk:wght@400..700&family=Spline+Sans+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #0a0b0e;
+  --color-ink-2: #101218;
+  --color-ink-3: #161922;
+  --color-film: #07080b;
+  --color-line: #262a36;
+  --color-line-soft: #1c1f2a;
+  --color-paper: #ece7da;
+  --color-muted: #8b8f9e;
+  --color-muted-2: #565a68;
+  --color-signal: #d8ff3e;
+  --color-signal-dim: #8a9e2a;
+  --color-teal: #4fd1c5;
+  --color-amber: #f5b73d;
+  --color-rose: #ff6b6b;
+
+  --font-serif: "Fraunces", Georgia, serif;
+  --font-sans: "Space Grotesk", system-ui, sans-serif;
+  --font-mono: "Spline Sans Mono", ui-monospace, monospace;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-ink);
+  color: var(--color-paper);
+  overflow-x: hidden;
+}

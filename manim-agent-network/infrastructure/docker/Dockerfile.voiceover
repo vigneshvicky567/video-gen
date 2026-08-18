@@ -1,5 +1,44 @@
 FROM base-manim-agent
 
+# Install helpers and local phoneme runtime used by Kokoro
+RUN apt-get update && apt-get install -y \
+    curl \
+    espeak-ng \
+    libespeak-ng1 \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Kokoro ONNX + edge-tts fallback. CPU onnxruntime: kokoro is multi-x realtime on
+# a desktop CPU, and onnxruntime-gpu's IMPORT hard-fails when CUDA libs are absent
+# (libcudart.so.13 not found) — it does NOT silently fall back to CPU, which killed
+# the whole voiceover service. CPU build has no such dependency.
+RUN uv pip install --system --no-cache \
+    "kokoro-onnx>=0.5.0" \
+    "onnxruntime>=1.20.0" \
+    "piper-tts>=1.2.0" \
+    "edge-tts>=6.1.0" \
+    "soundfile>=0.12.1" \
+    "numpy>=2.1.0,<3.0"
+
+# Preload Kokoro model assets for offline operation
+RUN mkdir -p /models/kokoro && \
+    curl -L --retry 5 --retry-delay 3 \
+      -o /models/kokoro/kokoro-v1.0.int8.onnx \
+      https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.int8.onnx && \
+    curl -L --retry 5 --retry-delay 3 \
+      -o /models/kokoro/voices-v1.0.bin \
+      https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
+
+# Preload Piper voice (offline neural fallback). en_US-lessac-medium: neutral,
+# widely-used, ~63MB. Needs both the .onnx and its .onnx.json config side by side.
+RUN mkdir -p /models/piper && \
+    curl -L --retry 5 --retry-delay 3 \
+      -o /models/piper/en_US-lessac-medium.onnx \
+      https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx && \
+    curl -L --retry 5 --retry-delay 3 \
+      -o /models/piper/en_US-lessac-medium.onnx.json \
+      https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json
+
 COPY shared/ /app/shared/
 COPY services/voiceover/ /app/
 

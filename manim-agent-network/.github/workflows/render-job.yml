@@ -1,0 +1,97 @@
+# One render job per ephemeral runner (Variant A). Dispatched by the web tier
+# with only a job_id; the runner reads topic/brief/target from the Neon row,
+# runs the existing compose pipeline, mirrors status to Neon, and pushes the
+# final mp4 to R2. Fire-and-forget from the web tier's side.
+name: render-job
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "web-tier job id (Neon jobs.id)"
+        required: true
+
+concurrency:
+  group: render-${{ inputs.job_id }}
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-latest            # 2 vCPU / 7 GB / 14 GB SSD
+    timeout-minutes: 350              # < 360 hard cap, leaves flush margin
+    env:
+      JOB_ID: ${{ inputs.job_id }}
+      REGISTRY: ghcr.io/${{ github.repository }}
+      IMAGE_TAG: latest
+      ORCH_URL: http://localhost:8010
+      NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      WATCHDOG_SECONDS: "20400"       # ~5h40 — flush 'failed' before the 6h kill
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fail in seconds, not after pulling 7 images: the driver script and a
+      # valid compose config are prerequisites for everything below.
+      - name: Preflight — driver script + compose config
+        run: |
+          test -f scripts/runner_neon_mirror.py
+          python -m py_compile scripts/runner_neon_mirror.py
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml config -q
+
+      - name: Lowercase registry
+        run: echo "REGISTRY=$(echo $REGISTRY | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Log in to ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Write runner .env
+        run: |
+          mkdir -p workspace
+          cat > .env <<EOF
+          NVIDIA_API_KEY=${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_API_KEYS=${{ secrets.NVIDIA_API_KEYS }}
+          MISTRAL_API_KEY=${{ secrets.MISTRAL_API_KEY }}
+          LANGSMITH_API_KEY=${{ secrets.LANGSMITH_API_KEY }}
+          NVIDIA_RPM=12
+          EOF
+
+      - name: Pull prebuilt images
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml pull
+
+      - name: Start pipeline
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml up -d --no-build
+
+      - name: Wait for required services to be ready
+        # orchestrator + the workers the early pipeline stages need. Covers
+        # validator LaTeX warmup + voiceover model load. image-fetcher (8006) is
+        # disabled; compositor (8005) is internal-only and comes up later.
+        run: |
+          ready() {
+            curl -sf "$ORCH_URL/health" >/dev/null || return 1
+            for p in 8001 8002 8003 8004; do
+              curl -sf "http://localhost:$p/health" >/dev/null || return 1
+            done
+          }
+          for i in $(seq 1 90); do
+            if ready; then echo "all required services ready"; exit 0; fi
+            sleep 5
+          done
+          echo "readiness timeout"; docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --tail=120
+          exit 1
+
+      - name: Install runner deps
+        run: pip install --quiet "httpx>=0.24" "psycopg[binary]>=3.1" "boto3>=1.34"
+
+      - name: Drive render → mirror to Neon → upload to R2
+        run: python scripts/runner_neon_mirror.py
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml logs --tail=200
+
+      - name: Teardown
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.yml down -v

@@ -1,61 +1,67 @@
 from fastapi import FastAPI
 from shared.schemas.requests import ScriptWriterRequest
 from shared.schemas.responses import ScriptWriterResponse
-from shared.schemas.common import ScriptResponse
-from shared.config import settings
-from google import genai
-from google.genai.types import GenerateContentConfig, HttpOptions
+from shared.schemas.common import ScriptResponse, AnalyzeRequest, TopicAnalysis
+from shared.config import settings, require_keys
+from shared.llm_client import get_llm_client
+from shared.log import get_logger, set_log_context, timed_block, log_llm_call, make_request_logging_middleware
+from .analyzer import analyze_topic
+from . import council
+from langsmith import traceable
 import json
-import logging
 
 app = FastAPI(title="Script Writer Service")
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+app.add_middleware(make_request_logging_middleware("script-writer"))
+logger = get_logger(__name__)
 
-# Initialize Gemini Client
-client = genai.Client(
-    api_key=settings.GEMINI_API_KEY,
-    http_options=HttpOptions(timeout=settings.GEMINI_REQUEST_TIMEOUT_MS),
-)
+client = get_llm_client()
+logger.info("Script Writer ready", extra={"model": settings.SCRIPT_WRITER_MODEL})
+
+
+@app.on_event("startup")
+async def _validate_config() -> None:
+    # Fail at boot, not with a 401 inside the first council call mid-job.
+    require_keys(any_of=("NVIDIA_API_KEY", "ANTHROPIC_API_KEY"))
+
 
 @app.post("/generate", response_model=ScriptWriterResponse)
+@traceable(run_type="chain", name="script-writer.generate")
 async def generate_script(request: ScriptWriterRequest):
-    logger.info(f"Generating script for topic: {request.topic}")
+    set_log_context(job_id=getattr(request, "job_id", ""))
+    logger.info("Generating script", extra={"topic": request.topic, "model": settings.SCRIPT_WRITER_MODEL})
 
-    prompt = f"""
-    You are an expert technical director and script writer for mathematical and technical animations.
-    Create a highly detailed script and scene-by-scene breakdown for a Manim CE animation about: {request.topic}.
-
-    Break the topic down into 2-5 distinct scenes.
-    For each scene, provide:
-    1. A clear narration text that will be spoken via Text-to-Speech.
-    2. A detailed visual description of what should happen in the Manim CE animation. Be specific about shapes, text, formulas, and animations (e.g., FadeIn, Transform).
-    3. An estimated duration in seconds.
-    """
+    brief = request.brief.model_dump() if request.brief else None
 
     try:
-        response = client.models.generate_content(
-            model=settings.SCRIPT_WRITER_MODEL,
-            contents=prompt,
-            config=GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=ScriptResponse,
-                temperature=0.7,
-            )
+        script_data, meta = await council.generate_script(request.topic, brief, client)
+
+        logger.info(
+            "Script generated",
+            extra={"title": script_data.title, "scenes": len(script_data.scenes),
+                   "mode": meta.get("mode"),
+                   "audit": meta.get("duration_audit"),
+                   "types": [s.content_type for s in script_data.scenes]},
         )
+        for s in script_data.scenes:
+            logger.info("  scene plan", extra={"scene_id": s.scene_id, "type": s.content_type,
+                                               "duration_s": s.estimated_duration_seconds,
+                                               "narration_preview": s.narration_text[:60]})
 
-        script_data = response.parsed
-        if not script_data:
-            # Fallback if parsed is empty
-            script_dict = json.loads(response.text)
-            script_data = ScriptResponse(**script_dict)
-
-        logger.info(f"Script generated successfully with {len(script_data.scenes)} scenes.")
-        return ScriptWriterResponse(script=script_data)
+        return ScriptWriterResponse(script=script_data, meta=meta)
 
     except Exception as e:
         logger.error(f"Error generating script: {str(e)}")
         raise e
+
+
+@app.post("/analyze", response_model=TopicAnalysis)
+@traceable(run_type="chain", name="script-writer.analyze")
+async def analyze(request: AnalyzeRequest):
+    """Pre-submit topic analysis: feasibility + questionnaire. Stateless, no job."""
+    set_log_context(job_id="")
+    logger.info("Analyzing topic", extra={"topic": request.topic})
+    return await analyze_topic(request.topic, client)
+
 
 @app.get("/health")
 def health():

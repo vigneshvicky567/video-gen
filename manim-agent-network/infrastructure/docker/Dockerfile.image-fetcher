@@ -1,0 +1,40 @@
+FROM base-manim-agent
+
+# SigLIP relevance scorer deps. onnxruntime-gpu uses CUDA when the host exposes
+# a GPU (see docker-compose deploy.resources), else falls back to CPU at runtime.
+RUN uv pip install --system --no-cache \
+    "onnxruntime-gpu>=1.20.0" \
+    "sentencepiece>=0.2.0" \
+    "Pillow>=10.0.0" \
+    "huggingface-hub>=0.23.0"
+
+# Preload SigLIP ONNX encoders + sentencepiece tokenizer for offline scoring.
+# Files land where siglip_scorer.py expects them (SIGLIP_MODEL_DIR=/models/siglip):
+#   image_encoder.onnx, text_encoder.onnx, sentencepiece.model
+# ONNX encoders come from deepghs/siglip_onnx (verified paths under
+# google/siglip-base-patch16-256/); the raw spiece.model comes from Google's
+# original repo (deepghs ships tokenizer.json, but the scorer uses SentencePiece).
+# Non-fatal: scorer checks _models_available() and passes through if any are missing.
+RUN python - <<'PY'
+import os
+from huggingface_hub import hf_hub_download
+d = "/models/siglip"
+os.makedirs(d, exist_ok=True)
+jobs = [
+    ("deepghs/siglip_onnx", "google/siglip-base-patch16-256/image_encode.onnx", "image_encoder.onnx"),
+    ("deepghs/siglip_onnx", "google/siglip-base-patch16-256/text_encode.onnx",  "text_encoder.onnx"),
+    ("google/siglip-base-patch16-256", "spiece.model",                           "sentencepiece.model"),
+]
+for repo, remote, local in jobs:
+    try:
+        p = hf_hub_download(repo_id=repo, filename=remote)
+        os.replace(p, os.path.join(d, local))
+        print("fetched", local)
+    except Exception as e:
+        print("WARN could not fetch", repo, remote, "->", e)
+PY
+
+COPY shared/ /app/shared/
+COPY services/image-fetcher/ /app/
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8006"]

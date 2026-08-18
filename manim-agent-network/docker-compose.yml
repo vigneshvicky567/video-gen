@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   base:
     build:
@@ -11,35 +9,91 @@ services:
     build:
       context: .
       dockerfile: infrastructure/docker/Dockerfile.orchestrator
+    restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8010:8000"
     volumes:
       - ./workspace:/workspace
+      - ./frontend:/frontend:ro
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - NVIDIA_BASE_URL=${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-vid gen}
       - SCRIPT_WRITER_URL=http://script-writer:8001
       - CODE_GENERATOR_URL=http://code-generator:8002
       - VALIDATOR_URL=http://validator:8003
       - VOICEOVER_URL=http://voiceover:8004
-      - ASSEMBLER_URL=http://assembler:8005
+      - ASSEMBLER_URL=http://compositor:8005
+      - IMAGE_FETCHER_URL=http://image-fetcher:8006
+      - COMPOSITOR_LLM_MODEL=${COMPOSITOR_LLM_MODEL:-moonshotai/kimi-k2-instruct}
+      - VALIDATOR_MAX_CONCURRENT_RENDERS=${VALIDATOR_MAX_CONCURRENT_RENDERS:-0}
+      - ORCH_CODEGEN_CONCURRENCY=${ORCH_CODEGEN_CONCURRENCY:-3}
+      - ORCH_VOICEOVER_CONCURRENCY=${ORCH_VOICEOVER_CONCURRENCY:-4}
+      - JOB_TIMEOUT_BASE_SECONDS=${JOB_TIMEOUT_BASE_SECONDS:-1800}
+      - JOB_TIMEOUT_PER_TARGET_MINUTE_SECONDS=${JOB_TIMEOUT_PER_TARGET_MINUTE_SECONDS:-420}
+      - JOB_TIMEOUT_MAX_SECONDS=${JOB_TIMEOUT_MAX_SECONDS:-20400}
+      - ASSEMBLER_TIMEOUT_MAX_SECONDS=${ASSEMBLER_TIMEOUT_MAX_SECONDS:-14400}
+      - SCRIPT_WORDS_PER_SECOND=${SCRIPT_WORDS_PER_SECOND:-2.2}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    # service_healthy: `depends_on` short form only guarantees the container
+    # STARTED — the orchestrator's startup resume scanner used to fire into
+    # workers that weren't listening yet.
     depends_on:
-      - base
-      - script-writer
-      - code-generator
-      - validator
-      - voiceover
-      - assembler
+      base:
+        condition: service_started
+      script-writer:
+        condition: service_healthy
+      code-generator:
+        condition: service_healthy
+      validator:
+        condition: service_healthy
+      voiceover:
+        condition: service_healthy
+      compositor:
+        condition: service_healthy
+      image-fetcher:
+        condition: service_healthy
 
   script-writer:
     build:
       context: .
       dockerfile: infrastructure/docker/Dockerfile.script-writer
+    restart: unless-stopped
     ports:
       - "8001:8001"
     volumes:
       - ./workspace:/workspace
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - NVIDIA_API_KEYS=${NVIDIA_API_KEYS:-}
+      - NVIDIA_BASE_URL=${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-vid gen}
+      - SCRIPT_WRITER_MODEL=${SCRIPT_WRITER_MODEL:-mistralai/mistral-large-3-675b-instruct-2512}
+      - SCRIPT_WRITER_FALLBACK_MODELS=${SCRIPT_WRITER_FALLBACK_MODELS:-openai/gpt-oss-120b,deepseek-ai/deepseek-v4-flash}
+      - NVIDIA_RPM=${NVIDIA_RPM:-35}
+      - SCRIPT_WORDS_PER_SECOND=${SCRIPT_WORDS_PER_SECOND:-2.2}
+      - SCRIPT_DURATION_TOLERANCE=${SCRIPT_DURATION_TOLERANCE:-0.10}
+      - SCRIPT_MIN_NARRATION_COVERAGE=${SCRIPT_MIN_NARRATION_COVERAGE:-0.80}
+      - COUNCIL_FULL_THRESHOLD_SECONDS=${COUNCIL_FULL_THRESHOLD_SECONDS:-180}
+      - COUNCIL_MAX_PARALLEL_WRITERS=${COUNCIL_MAX_PARALLEL_WRITERS:-4}
+      - SCRIPT_MAX_SCENES=${SCRIPT_MAX_SCENES:-80}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8001/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     depends_on:
       - base
 
@@ -47,12 +101,41 @@ services:
     build:
       context: .
       dockerfile: infrastructure/docker/Dockerfile.code-generator
+    restart: unless-stopped
     ports:
       - "8002:8002"
     volumes:
       - ./workspace:/workspace
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - NVIDIA_API_KEYS=${NVIDIA_API_KEYS:-}
+      - NVIDIA_BASE_URL=${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-vid gen}
+      - CODE_GENERATOR_MODEL=${CODE_GENERATOR_MODEL:-qwen/qwen3-coder-480b-a35b-instruct}
+      - CODE_GENERATOR_TEMPERATURE=${CODE_GENERATOR_TEMPERATURE:-}
+      - CODE_GENERATOR_TOP_P=${CODE_GENERATOR_TOP_P:-}
+      - CODE_GENERATOR_MAX_TOKENS=${CODE_GENERATOR_MAX_TOKENS:-16384}
+      - RENDER_MODE=${RENDER_MODE:-hybrid}
+      - NVIDIA_RPM=${NVIDIA_RPM:-35}
+      - NIM_MAX_CONCURRENT=${NIM_MAX_CONCURRENT:-3}
+      # 16k-token code generations legitimately stream past the shared 300s
+      # read default — give code-gen its own (overridable) budget.
+      - NVIDIA_TIMEOUT_SECONDS=${CODEGEN_NVIDIA_TIMEOUT_SECONDS:-600}
+      - NVIDIA_READ_TIMEOUT_SECONDS=${CODEGEN_NVIDIA_READ_TIMEOUT_SECONDS:-600}
+      - NVIDIA_CONNECT_TIMEOUT_SECONDS=${NVIDIA_CONNECT_TIMEOUT_SECONDS:-10}
+      # Mistral fallback when NIM fails/429s (separate quota)
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY:-}
+      - MISTRAL_BASE_URL=${MISTRAL_BASE_URL:-https://api.mistral.ai/v1}
+      - MISTRAL_MODEL=${MISTRAL_MODEL:-mistral-large-latest}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8002/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     depends_on:
       - base
 
@@ -60,10 +143,22 @@ services:
     build:
       context: .
       dockerfile: infrastructure/docker/Dockerfile.validator
+    restart: unless-stopped
     ports:
       - "8003:8003"
     volumes:
       - ./workspace:/workspace
+    environment:
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-vid gen}
+      - VALIDATOR_MAX_CONCURRENT_RENDERS=${VALIDATOR_MAX_CONCURRENT_RENDERS:-0}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8003/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 180s   # LaTeX warmup render runs in the startup hook
     depends_on:
       - base
 
@@ -71,23 +166,137 @@ services:
     build:
       context: .
       dockerfile: infrastructure/docker/Dockerfile.voiceover
+    restart: unless-stopped
     ports:
       - "8004:8004"
     volumes:
       - ./workspace:/workspace
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-false}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-vid gen}
+      - VOICEOVER_PROVIDER=${VOICEOVER_PROVIDER:-kokoro}
+      # piper matches shared/config.py and the offline-first design; edge_tts
+      # (cloud) stays available via explicit env override only.
+      - VOICEOVER_FALLBACK_PROVIDER=${VOICEOVER_FALLBACK_PROVIDER:-piper}
+      - EDGE_TTS_VOICE=${EDGE_TTS_VOICE:-en-US-JennyNeural}
+      - VOICEOVER_MAX_RETRIES=${VOICEOVER_MAX_RETRIES:-3}
+      - VOICEOVER_RETRY_BACKOFF_SECONDS=${VOICEOVER_RETRY_BACKOFF_SECONDS:-2.0}
+      - KOKORO_MODEL_PATH=${KOKORO_MODEL_PATH:-/models/kokoro/kokoro-v1.0.int8.onnx}
+      - KOKORO_VOICES_PATH=${KOKORO_VOICES_PATH:-/models/kokoro/voices-v1.0.bin}
+      - KOKORO_VOICE=${KOKORO_VOICE:-af_sarah}
+      - KOKORO_SPEED=${KOKORO_SPEED:-1.0}
+      - KOKORO_LANG=${KOKORO_LANG:-en-us}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8004/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 120s   # Kokoro ONNX model load
+    # GPU for Kokoro ONNX. onnxruntime falls back to CPU (still works), so GPU is
+    # OFF by default here to run on CPU-only / WSL-without-GPU hosts. To use the GPU:
+    #   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
     depends_on:
       - base
 
-  assembler:
+  image-fetcher:
     build:
       context: .
-      dockerfile: infrastructure/docker/Dockerfile.assembler
+      dockerfile: infrastructure/docker/Dockerfile.image-fetcher
+    restart: unless-stopped
     ports:
-      - "8005:8005"
+      - "8006:8006"
     volumes:
       - ./workspace:/workspace
+    environment:
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - NVIDIA_API_KEYS=${NVIDIA_API_KEYS:-}
+      - NVIDIA_BASE_URL=${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - PEXELS_API_KEY=${PEXELS_API_KEY}
+      - PIXABAY_API_KEY=${PIXABAY_API_KEY:-}
+      - IMAGE_EVAL_MODEL=${IMAGE_EVAL_MODEL:-meta/llama-4-maverick-17b-128e-instruct}
+      # keyword_extractor (this service) reads COMPOSITOR_LLM_MODEL — must be passed here.
+      - COMPOSITOR_LLM_MODEL=${COMPOSITOR_LLM_MODEL:-mistralai/mistral-small-4-119b-2603}
+      - SIGLIP_MODEL_DIR=${SIGLIP_MODEL_DIR:-/models/siglip}
+      - SIGLIP_THRESHOLD=${SIGLIP_THRESHOLD:-0.15}
+      - NVIDIA_RPM=${NVIDIA_RPM:-35}
+      - NVIDIA_READ_TIMEOUT_SECONDS=30
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8006/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 120s   # SigLIP ONNX model load
+    # GPU for SigLIP ONNX scoring. onnxruntime falls back to CPU (still works), so GPU
+    # is OFF by default here. To use the GPU:
+    #   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    depends_on:
+      - base
+
+  compositor:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.compositor
+    restart: unless-stopped
+    expose:
+      - "8005"
+    volumes:
+      - ./workspace:/workspace
+      - ./assets:/assets:ro          # intro.mp4 / outro.mp4 / music.mp3 (read-only)
+    environment:
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - NVIDIA_API_KEYS=${NVIDIA_API_KEYS:-}
+      - NVIDIA_BASE_URL=${NVIDIA_BASE_URL:-https://integrate.api.nvidia.com/v1}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - COMPOSITOR_LLM_MODEL=${COMPOSITOR_LLM_MODEL:-moonshotai/kimi-k2-instruct}
+      # CPU-safe default: no --gpu/NVENC render flags. GPU overlay sets this to 1.
+      - COMPOSITOR_GPU_RENDER=${COMPOSITOR_GPU_RENDER:-0}
+      # Defaults MATCH shared/config.py (single source of truth) — override via
+      # env only when a host genuinely needs different chunking.
+      - COMPOSITOR_CHUNK_THRESHOLD_SECONDS=${COMPOSITOR_CHUNK_THRESHOLD_SECONDS:-480}
+      - COMPOSITOR_CHUNK_MAX_SCENES=${COMPOSITOR_CHUNK_MAX_SCENES:-8}
+      - COMPOSITOR_CHUNK_MAX_SECONDS=${COMPOSITOR_CHUNK_MAX_SECONDS:-300}
+      - COMPOSITOR_CHUNK_TIMEOUT_MAX_SECONDS=${COMPOSITOR_CHUNK_TIMEOUT_MAX_SECONDS:-3600}
+      - SERVICE_HTTP_TIMEOUT_SECONDS=${SERVICE_HTTP_TIMEOUT_SECONDS:-900}
+      # Final-cut polish (empty = off). Drop assets in ./assets and set these.
+      - INTRO_VIDEO_PATH=${INTRO_VIDEO_PATH:-}
+      - OUTRO_VIDEO_PATH=${OUTRO_VIDEO_PATH:-}
+      - BG_MUSIC_PATH=${BG_MUSIC_PATH:-}
+      # BGM rotation: pick a track per job from the bgm dir (overridden by BG_MUSIC_PATH).
+      - BG_MUSIC_DIR=${BG_MUSIC_DIR:-/assets/bgm}
+      - BG_MUSIC_VOLUME=${BG_MUSIC_VOLUME:-0.12}
+      - BG_MUSIC_FADEOUT_SECONDS=${BG_MUSIC_FADEOUT_SECONDS:-2.0}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8005/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    # GPU for hardware video encode (NVENC). OFF by default; ffmpeg uses CPU (libx264)
+    # without it. To use the GPU:
+    #   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu, video]
     depends_on:
       - base
 

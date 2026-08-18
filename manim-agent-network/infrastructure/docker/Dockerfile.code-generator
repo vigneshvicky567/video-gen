@@ -3,4 +3,6 @@ FROM base-manim-agent
 COPY shared/ /app/shared/
 COPY services/code-generator/ /app/
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8002"]
+# Single worker: async semaphore (NIM_MAX_CONCURRENT) handles parallelism
+# without multiplying API usage across processes.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8002", "--workers", "1"]

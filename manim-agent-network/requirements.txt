@@ -9,7 +9,21 @@ httpx>=0.24.0
 moviepy>=1.0.3
 manim>=0.18.0
 pyttsx3>=2.90
+edge-tts>=6.1.0
 python-dotenv>=1.0.0
 # Coqui TTS - uncomment if you want local TTS with voice cloning
 # Note: Requires manual installation from source or conda, not available on PyPI
 # tts @ git+https://github.com/coqui-ai/TTS
+
+# Fish Audio S2 Pro local inference
+# The fish-speech repo must be cloned and installed separately (see .env.template).
+# httpx is already listed above and is used to call the local API server.
+
+# Anthropic Claude (routed to when a model id starts with "claude")
+anthropic>=0.49.0
+
+# LangSmith Tracing
+langsmith>=0.4.0
+
+# Testing
+hypothesis==6.112.2

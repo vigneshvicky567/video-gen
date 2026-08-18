@@ -1,0 +1,15 @@
+# LOCAL-ONLY run override (not for commit). Ports 8010/8011 are taken by an
+# unrelated project (its admin-backend / user-service), which squats the whole
+# 80xx range, so serve video-gen on 8090 instead.
+# The orchestrator already serves the static frontend same-origin when /frontend
+# exists in the container (see orchestrator/app/main.py tail), so mounting the
+# repo's frontend/ there makes http://localhost:8011/studio.html work with
+# studio.js's relative fetches — no web-tier, no CORS, no auth needed for local.
+# Delete this file to restore the default 8010:8000 mapping.
+services:
+  orchestrator:
+    ports: !override
+      - "8090:8000"
+    volumes:
+      - ./workspace:/workspace
+      - ./frontend:/frontend:ro

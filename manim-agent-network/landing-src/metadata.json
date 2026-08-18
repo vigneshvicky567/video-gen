@@ -1,0 +1,6 @@
+{
+  "name": "Manim Agent Network",
+  "description": "Multi-agent video synthesis with Manim and Kokoro TTS.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

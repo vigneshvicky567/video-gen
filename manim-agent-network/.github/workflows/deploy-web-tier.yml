@@ -1,0 +1,45 @@
+# Deploy the thin web tier to Azure App Service (free F1, Web App for Containers).
+# Builds the web-tier image (frontend baked in -> served same-origin, no CORS),
+# pushes to ghcr.io, and deploys. App settings (Neon DSN, Clerk, R2, GitHub
+# dispatch token, NVIDIA key for /analyze, DD_API_KEY) are set in Azure, NOT here.
+name: deploy-web-tier
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/web-tier/**"
+      - "frontend/**"
+  workflow_dispatch: {}
+
+env:
+  REGISTRY: ghcr.io/${{ github.repository }}
+  IMAGE: web-tier
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lowercase registry
+        run: echo "REGISTRY=$(echo $REGISTRY | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Log in to ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Build & push web-tier image
+        run: |
+          docker build -f services/web-tier/Dockerfile -t "${REGISTRY}/${IMAGE}:${{ github.sha }}" -t "${REGISTRY}/${IMAGE}:latest" .
+          docker push "${REGISTRY}/${IMAGE}:${{ github.sha }}"
+          docker push "${REGISTRY}/${IMAGE}:latest"
+
+      - name: Deploy to Azure App Service (container)
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE }}:${{ github.sha }}

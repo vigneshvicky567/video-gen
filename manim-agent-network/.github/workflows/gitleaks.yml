@@ -1,0 +1,20 @@
+# Secret-leak gate. Fails the build if a key (e.g. a committed .env) is detected.
+# Part of the M0 security posture — pairs with the working-tree .gitignore.
+name: gitleaks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch: {}
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # full history so a leak anywhere in the past is caught
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml

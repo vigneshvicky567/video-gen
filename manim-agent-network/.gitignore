@@ -1,1 +1,116 @@
+# ─── Secrets (NEVER commit) ──────────────────────────────────────────────────
+.env
+.env.*
+!.env.template
+!.env.example
+*.key
+*.pem
+api_key*.txt
+credentials.json
+*credentials*.json
+
+# ─── Python ──────────────────────────────────────────────────────────────────
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+develop-eggs/
+downloads/
+eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ─── Virtual envs ────────────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+.python-version
+
+# ─── Test & coverage ─────────────────────────────────────────────────────────
+.pytest_cache/
+.hypothesis/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+.cache/
+nosetests.xml
+*.cover
+.hypothesis/
+
+# ─── Generated runtime artifacts ─────────────────────────────────────────────
+workspace/temp/
+workspace/outputs/
+workspace/_warmup/
+workspace/_frmchk/
+workspace/jobs.db*
+workspace/probe_*.json
+graphify-out/
+*.mp4
+*.wav
+*.mp3
+*.aac
+!docs/**/*.mp4
+!assets/**/*.mp4
+# README media (curated, committed)
+!assets/**/*.gif
+!assets/**/*.png
+
+# ─── Manim render junk ───────────────────────────────────────────────────────
+media/
+**/render_scene_*/
+
+# ─── Docker / build ──────────────────────────────────────────────────────────
+*.pid
+.dockerignore.local
+
+# ─── LangSmith / tracing ─────────────────────────────────────────────────────
+.langsmith/
+*.trace.json
+
+# ─── IDE / editor ────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+
+# ─── OS ──────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# ─── Node (HyperFrames CLI installed inside containers, not host) ────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+
+# ─── Logs ────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ─── Local skill clones (user-fetched docs, not source) ──────────────────────
+skill_files/
+skills/
