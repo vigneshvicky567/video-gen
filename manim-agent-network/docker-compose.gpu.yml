@@ -1,0 +1,37 @@
+# GPU opt-in overlay. Base docker-compose.yml runs CPU-only by default so it works
+# on WSL / hosts without an NVIDIA adapter. On a host WITH the NVIDIA Container
+# Toolkit, enable GPU acceleration by layering this file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+#
+# voiceover (Kokoro ONNX) and image-fetcher (SigLIP ONNX) use the GPU for model
+# inference; compositor uses it for NVENC hardware video encode.
+services:
+  voiceover:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  image-fetcher:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  compositor:
+    environment:
+      - COMPOSITOR_GPU_RENDER=1   # enable --gpu/NVENC when the GPU is present
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu, video]

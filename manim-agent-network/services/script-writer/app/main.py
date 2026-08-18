@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from shared.schemas.requests import ScriptWriterRequest
 from shared.schemas.responses import ScriptWriterResponse
 from shared.schemas.common import ScriptResponse, AnalyzeRequest, TopicAnalysis
-from shared.config import settings
+from shared.config import settings, require_keys
 from shared.llm_client import get_llm_client
 from shared.log import get_logger, set_log_context, timed_block, log_llm_call, make_request_logging_middleware
 from .analyzer import analyze_topic
@@ -16,6 +16,12 @@ logger = get_logger(__name__)
 
 client = get_llm_client()
 logger.info("Script Writer ready", extra={"model": settings.SCRIPT_WRITER_MODEL})
+
+
+@app.on_event("startup")
+async def _validate_config() -> None:
+    # Fail at boot, not with a 401 inside the first council call mid-job.
+    require_keys(any_of=("NVIDIA_API_KEY", "ANTHROPIC_API_KEY"))
 
 
 @app.post("/generate", response_model=ScriptWriterResponse)

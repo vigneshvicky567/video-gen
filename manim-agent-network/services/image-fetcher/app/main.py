@@ -7,9 +7,12 @@ then re-ranks and filters by SigLIP image-text similarity.
 """
 
 import asyncio
+import ipaddress
 import logging
+import socket
 from pathlib import Path
 from typing import Dict, List
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import FastAPI
@@ -19,6 +22,7 @@ from shared.log import get_logger, set_log_context, make_request_logging_middlew
 from shared.schemas.requests import ImageFetcherRequest
 from shared.schemas.responses import ImageFetcherResponse
 
+from . import image_cache
 from .keyword_extractor import extract_keywords
 from .pexels_client import search_pexels
 from .pixabay_client import search_pixabay
@@ -51,6 +55,81 @@ DOWNLOAD_HEADERS = {
     "Accept": "image/jpeg,image/png,image/*;q=0.8",
     "Referer": "https://commons.wikimedia.org/",
 }
+
+
+# SSRF guard. `url` and every redirect target originate from external API JSON
+# (Pexels/Pixabay/Wikimedia responses) and are fully attacker-influenceable, so
+# a bare follow-redirects GET could reach internal services (http://orchestrator:8000)
+# or the cloud metadata endpoint (169.254.169.254). Every fetch — and every
+# redirect hop — must pass _is_safe_public_url BEFORE the request is issued.
+#
+# Allowlist = the image-serving hosts the source clients actually return:
+#   Pexels     photo.src.large2x/large -> images.pexels.com
+#   Pixabay    largeImageURL           -> pixabay.com / cdn.pixabay.com
+#   Wikimedia  imageinfo.thumburl      -> upload.wikimedia.org (thumbs) + commons.wikimedia.org
+# Subdomains of these are allowed (e.g. i.pixabay.com under pixabay.com).
+_ALLOWED_IMAGE_HOSTS = (
+    "images.pexels.com",
+    "pixabay.com",
+    "cdn.pixabay.com",
+    "upload.wikimedia.org",
+    "commons.wikimedia.org",
+)
+
+# Cloud metadata IP — rejected explicitly (it is link-local, but call it out).
+_METADATA_IP = "169.254.169.254"
+
+# Bound manual redirect following.
+_MAX_REDIRECTS = 3
+
+
+def _host_allowed(host: str) -> bool:
+    """True if host equals an allowlisted host or is a subdomain of one."""
+    host = host.lower().rstrip(".")
+    for allowed in _ALLOWED_IMAGE_HOSTS:
+        if host == allowed or host.endswith("." + allowed):
+            return True
+    return False
+
+
+def _is_safe_public_url(url: str) -> bool:
+    """Return True only for an https URL whose host is on the CDN allowlist AND
+    resolves exclusively to public IP addresses.
+
+    Rejects: non-https schemes, non-allowlisted hosts, the cloud metadata IP,
+    and any host that resolves to a private/loopback/link-local/reserved/
+    multicast address (DNS-rebinding / internal-service SSRF)."""
+    try:
+        parts = urlsplit(url)
+    except Exception:
+        return False
+
+    if parts.scheme != "https":
+        return False
+
+    host = parts.hostname
+    if not host or not _host_allowed(host):
+        return False
+
+    try:
+        infos = socket.getaddrinfo(host, parts.port or 443, proto=socket.IPPROTO_TCP)
+    except OSError:
+        return False
+    if not infos:
+        return False
+
+    for info in infos:
+        addr = info[4][0]
+        if addr == _METADATA_IP:
+            return False
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            return False
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast):
+            return False
+    return True
 
 
 def validate_image_magic_bytes(data: bytes) -> bool:
@@ -106,20 +185,63 @@ async def download_and_validate_image(
     
     Validates: Requirements 2.4, 2.7
     """
+    _MAX_IMAGE_BYTES = 15 * 1024 * 1024  # attacker/CDN-controlled body — cap the read
+    # SSRF: validate the initial URL up front. Redirects are followed manually
+    # below so each hop's target can be re-validated before we connect to it.
+    if not _is_safe_public_url(url):
+        logger.warning(
+            f"Blocked unsafe/non-allowlisted image URL for scene {scene_id}, "
+            f"img {img_index}: {url}"
+        )
+        return False
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(url, headers=DOWNLOAD_HEADERS, follow_redirects=True)
-            
-            if response.status_code >= 400:
-                logger.warning(
-                    f"Failed to download image for scene {scene_id}, "
-                    f"img {img_index}: HTTP {response.status_code}"
-                )
+        # follow_redirects=False: a 3xx to an internal host must not be followed
+        # blindly. We chase redirects ourselves (bounded), re-checking each target.
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+            current_url = url
+            for _redirect in range(_MAX_REDIRECTS + 1):
+                async with client.stream("GET", current_url, headers=DOWNLOAD_HEADERS) as response:
+                    if response.is_redirect:
+                        location = response.headers.get("location")
+                        next_url = str(response.next_request.url) if response.next_request else location
+                        if not next_url or not _is_safe_public_url(next_url):
+                            logger.warning(
+                                f"Blocked unsafe redirect target for scene {scene_id}, "
+                                f"img {img_index}: {next_url}"
+                            )
+                            return False
+                        current_url = next_url
+                        continue
+
+                    if response.status_code >= 400:
+                        logger.warning(
+                            f"Failed to download image for scene {scene_id}, "
+                            f"img {img_index}: HTTP {response.status_code}"
+                        )
+                        return False
+
+                    declared = response.headers.get("content-length")
+                    if declared and declared.isdigit() and int(declared) > _MAX_IMAGE_BYTES:
+                        logger.warning(f"Image too large ({declared}B) for scene {scene_id}, "
+                                       f"img {img_index}; skipping")
+                        return False
+
+                    chunks = []
+                    received = 0
+                    async for chunk in response.aiter_bytes():
+                        received += len(chunk)
+                        if received > _MAX_IMAGE_BYTES:
+                            logger.warning(f"Image exceeded {_MAX_IMAGE_BYTES}B cap for scene "
+                                           f"{scene_id}, img {img_index}; aborting download")
+                            return False
+                        chunks.append(chunk)
+                    content = b"".join(chunks)
+                    break
+            else:
+                logger.warning(f"Too many redirects (>{_MAX_REDIRECTS}) for scene {scene_id}, "
+                               f"img {img_index}; aborting download")
                 return False
-            
-            # Read the response content
-            content = response.content
-            
+
             # Validate magic bytes
             if not validate_image_magic_bytes(content):
                 logger.warning(
@@ -161,8 +283,27 @@ async def fetch_images_for_scene(
     set_log_context(scene_id=scene_id)
     logger.info("Fetching images", extra={"scene_id": scene_id})
 
-    # Step 1: Extract keywords (semantic LLM call; regex fallback warns loudly)
-    keywords = extract_keywords(narration_text, visual_description)
+    # Step 0: cache first — previously kept images live in a persistent
+    # embedding store; a similarity hit skips keywords + 3 API searches +
+    # downloads entirely. The vision vet still judges the pixels, so a stale
+    # or merely-similar cached image can't sneak into the scene.
+    query = f"{visual_description}. {narration_text}"
+    cached_paths, cached_alts = await asyncio.to_thread(image_cache.lookup, query, 5)
+    if cached_paths:
+        final = await asyncio.to_thread(
+            vision_select, cached_paths, cached_alts, narration_text, visual_description, 3
+        )
+        if final:
+            logger.info("Image cache HIT — skipping network fetch",
+                        extra={"scene_id": scene_id, "kept": len(final)})
+            return final
+        logger.info("Image cache candidates rejected by vision vet; fetching fresh",
+                    extra={"scene_id": scene_id})
+
+    # Step 1: Extract keywords (semantic LLM call; regex fallback warns loudly).
+    # to_thread: extract_keywords is a SYNC blocking LLM call — inline it and the
+    # whole service's event loop (incl. /health) stalls for its duration.
+    keywords = await asyncio.to_thread(extract_keywords, narration_text, visual_description)
     logger.info("Keywords extracted", extra={"scene_id": scene_id, "keywords": keywords})
 
     # Step 2: Pool all sources per-term (Pexels + Pixabay stock, Wikimedia Commons
@@ -191,6 +332,15 @@ async def fetch_images_for_scene(
         return []
 
     # Step 3: Download + magic-byte validate. Carry alt text onto the saved path.
+    # Cap the pool BEFORE downloading — the pooled candidate count is unbounded
+    # (3 sources × N terms) and every extra download is wasted bandwidth once
+    # SigLIP keeps only the top 5.
+    _MAX_CANDIDATES = 12
+    if len(candidates) > _MAX_CANDIDATES:
+        logger.info("Capping candidate pool before download",
+                    extra={"scene_id": scene_id, "pooled": len(candidates),
+                           "cap": _MAX_CANDIDATES})
+        candidates = dict(list(candidates.items())[:_MAX_CANDIDATES])
     image_paths: List[str] = []
     path_alts: Dict[str, str] = {}
     output_dir = Path(settings.WORKSPACE_DIR) / "temp" / job_id / "images" / f"scene_{scene_id}"
@@ -207,7 +357,6 @@ async def fetch_images_for_scene(
 
     # Step 4 (Stage 1): SigLIP visual ranking — keep top 5 to feed the vision LLM.
     # Degrades to pass-through (top_k) if the SigLIP model files are absent.
-    query = f"{visual_description}. {narration_text}"
     ranked = await asyncio.to_thread(filter_by_relevance, image_paths, query, top_k=5)
     logger.info("After SigLIP filter",
                 extra={"scene_id": scene_id, "before": len(image_paths), "after": len(ranked)})
@@ -219,6 +368,11 @@ async def fetch_images_for_scene(
     )
     logger.info("After vision vet",
                 extra={"scene_id": scene_id, "before": len(ranked), "after": len(final)})
+
+    # Step 6: persist the keepers (file + embedding) so the next scene/job with
+    # a similar query reuses them without any network fetch.
+    if final:
+        await asyncio.to_thread(image_cache.add, final, path_alts)
     return final
 
 

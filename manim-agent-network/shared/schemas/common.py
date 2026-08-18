@@ -173,6 +173,9 @@ class GenerationBrief(BaseModel):
     visual_style: Optional[str] = None
     pacing: Optional[str] = None
     answers: List[BriefAnswer] = Field(default_factory=list)
+    # Per-job render engine ("hybrid" | "manim" | "hyperframes"). First-class field
+    # so it survives brief round-trips (DB persist/resume) as part of the contract.
+    render_mode: Optional[str] = None
 
 class QuestionOption(BaseModel):
     label: str
@@ -191,6 +194,7 @@ class AnalyzeRequest(BaseModel):
 
 class TopicAnalysis(BaseModel):
     topic: str
+    title: str = ""                        # short (<=90 char) plain-English title; abstracts long/messy prompts
     feasibility_summary: str
     recommended_duration_seconds: int
     max_duration_seconds: int

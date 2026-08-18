@@ -105,7 +105,7 @@ def _patch(monkeypatch, after):
     monkeypatch.setattr(orch_main, "db", fake_db)
     monkeypatch.setattr(orch_main, "app_graph", _FakeGraph([dict(_PROGRESS)], after))
     monkeypatch.setattr(orch_main, "job_wallclock_timeout_s", lambda *_a, **_k: 0.05)
-    monkeypatch.setattr(orch_main, "_tracer", None)
+    monkeypatch.setattr(orch_main, "_tracer", None, raising=False)
     return fake_db
 
 

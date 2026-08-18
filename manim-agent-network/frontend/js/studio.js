@@ -35,7 +35,7 @@
   ];
 
   /* ── state ── */
-  let jobs = [], health = null;
+  let jobs = [], health = null, jobsLoaded = false;
   let selectedId = null, jobState = null, prevState = null;
   let view = "home";
   let etaSmooth = null, createdMs = null, completedMs = null;
@@ -43,6 +43,9 @@
   let mountKey = null;                // what shell is currently rendered
   let lastJobsSig = "", lastHealthSig = "";
   let setupOpen = false;
+  let chatLog = [];                   // watch-page chat: [{role, content, typing?}]
+  let chatRange = null;               // [startSec, endSec] if viewer marked a range, else null (=current scene)
+  let askStart = null;                // pending range-start while marking
 
   /* library/history view state */
   let libQuery = "", libFilter = "all";
@@ -94,11 +97,11 @@
       image_fetch: "finding images",
       code_generation: "creating scenes", validation: "rendering", voiceover: "adding voice",
       voiceover_and_images: "adding voice", assembly: "finishing up",
-      completed: "ready", failed: "failed", cancelled: "stopped",
+      completed: "ready", partial: "partial cut", failed: "failed", cancelled: "stopped",
     })[s] || s || "unknown";
   }
   function curStageIdx(status) {
-    if (status === "completed") return 5;
+    if (status === "completed" || status === "partial") return 5;
     const i = STAGES.findIndex((st) => st.keys.includes(status));
     return i < 0 ? 0 : i;
   }
@@ -123,7 +126,7 @@
     return 0;                  // no script at all → script-writer fault
   }
   function pipelineFraction(state) {
-    if (state.status === "completed") return 1;
+    if (state.status === "completed" || state.status === "partial") return 1;
     const c = counts(state), idx = curStageIdx(state.status);
     if (state.status === "starting" || state.status === "pending") return 0.04;
     if (state.status === "script_generation") return 0.12;
@@ -140,7 +143,9 @@
   function sceneState(sid, state) {
     const has = (o) => o && (sid in o);
     if (has(state.render_paths)) return "rendered";
-    if (has(state.error_logs)) return state.status === "failed" ? "error" : "retry";
+    // Terminal job (failed/partial): a scene with errors and no render was DROPPED — show
+    // "fault", not "healing" (which implies in-flight retries on a still-running job).
+    if (has(state.error_logs)) return (state.status === "failed" || state.status === "partial") ? "error" : "retry";
     if (has(state.code_paths)) return "coding";
     return "queued";
   }
@@ -189,7 +194,7 @@
   function slate() {
     return `<div class="slate">
       <span class="clap">Roll camera —</span>
-      <input id="slate-input" maxlength="300" placeholder="Describe an idea to film… e.g. how a hash map handles collisions"/>
+      <input id="slate-input"placeholder="Describe an idea to film… e.g. how a hash map handles collisions"/>
       ${renderModeToggle()}
       <button class="go" id="slate-go">Make it <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0a0b0e" stroke-width="2.4"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
     </div>`;
@@ -201,21 +206,21 @@
   function jobCtlBtn(f, cls) {
     if (RUNNING.has(f.status))
       return `<button class="${cls}" data-stop="${f.job_id}" title="Stop — progress is saved, resume later">■ Stop</button>`;
-    if (f.status === "failed" || f.status === "cancelled")
-      return `<button class="${cls}" data-retry="${f.job_id}" title="Resume this job">↻ ${f.status === "cancelled" ? "Continue" : "Retry"}</button>`;
+    if (f.status === "failed" || f.status === "cancelled" || f.status === "partial")
+      return `<button class="${cls}" data-retry="${f.job_id}" title="${f.status === "partial" ? "Render the dropped scenes" : "Resume this job"}">↻ ${f.status === "cancelled" ? "Continue" : f.status === "partial" ? "Finish" : "Retry"}</button>`;
     return "";
   }
 
   function drawerItems() {
     if (!jobs.length) return `<p class="cs-empty">No films yet.<br/>The swarm awaits its first command.</p>`;
     return jobs.map((f) => {
-      const kind = f.status === "completed" ? "ready" : (f.status === "failed" || f.status === "cancelled") ? "fail" : "render";
-      const badge = f.status === "completed" ? "Ready" : f.status === "failed" ? "Failed" : f.status === "cancelled" ? "Stopped" : "Rendering";
+      const kind = f.status === "completed" ? "ready" : f.status === "partial" ? "render" : (f.status === "failed" || f.status === "cancelled") ? "fail" : "render";
+      const badge = f.status === "completed" ? "Ready" : f.status === "partial" ? "Partial" : f.status === "failed" ? "Failed" : f.status === "cancelled" ? "Stopped" : "Rendering";
       const meta = `${chipText(f.status)} · ${timeAgo(parseUtc(f.created_at))}`;
       const csDel = !RUNNING.has(f.status)
         ? `<button class="cs-del" data-del="${f.job_id}" title="Delete">✕</button>` : "";
       return `<div class="cs ${f.job_id === selectedId ? "on" : ""}" data-id="${f.job_id}">
-        <div class="ti">${esc(f.topic)}</div>
+        <div class="ti">${esc(f.script_title || f.topic)}</div>
         <div class="ti-meta">${esc(meta)}</div>
         <span class="bd bd-${kind}">${badge}</span>${jobCtlBtn(f, "cs-retry")}${csDel}
       </div>`;
@@ -279,7 +284,7 @@
       <p class="greet-sub">Good ${part}. Describe any idea and we'll shoot the explainer.</p>
       <div class="hero-compose">
         <svg class="plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-        <input id="home-input" maxlength="300" placeholder="A concept to explain — e.g. how a hash map handles collisions"/>
+        <textarea id="home-input" rows="1" placeholder="A concept to explain — e.g. how a hash map handles collisions"></textarea>
         <select class="model" id="home-mode" title="Render engine for the next film">
           ${RENDER_MODES.map(([v, l]) => `<option value="${v}" ${renderMode === v ? "selected" : ""}>${l}</option>`).join("")}
         </select>
@@ -300,11 +305,17 @@
       if (libFilter === "completed" && j.status !== "completed") return false;
       if (libFilter === "failed" && j.status !== "failed") return false;
       if (libFilter === "running" && !RUNNING.has(j.status)) return false;
-      if (q && !String(j.topic || "").toLowerCase().includes(q)) return false;
+      if (q && !String(j.script_title || j.topic || "").toLowerCase().includes(q)) return false;
       return true;
     });
   }
+  const SKEL_CARD = `<article class="lib-card skel" aria-hidden="true">
+    <div class="lib-pic"><div class="skel-thumb"></div></div>
+    <div class="lib-body"><div class="skel-line skel-ti"></div><div class="skel-line skel-meta"></div></div>
+  </article>`;
+
   function libCards() {
+    if (!jobsLoaded) return SKEL_CARD.repeat(6);
     const list = libFiltered().slice().sort((a, b) => {
       const rank = (s) => s === "failed" || s === "cancelled" ? 2 : s === "completed" ? 0 : 1;
       return rank(a.status) - rank(b.status);
@@ -313,21 +324,23 @@
       return `<p class="lib-empty">No films ${libQuery ? "match that search" : "here yet"}.<br/>Describe an idea to shoot one.</p>`;
     }
     return list.map((f) => {
-      const done = f.status === "completed", failed = f.status === "failed" || f.status === "cancelled";
-      const kind = done ? "ready" : failed ? "fail" : "render";
-      const badge = done ? "Ready" : f.status === "failed" ? "Failed" : f.status === "cancelled" ? "Stopped" : chipText(f.status);
+      const done = f.status === "completed", partial = f.status === "partial";
+      const failed = f.status === "failed" || f.status === "cancelled";
+      const playable = done || partial;  // both have a final MP4 to play/poster
+      const kind = done ? "ready" : partial ? "render" : failed ? "fail" : "render";
+      const badge = done ? "Ready" : partial ? "Partial" : f.status === "failed" ? "Failed" : f.status === "cancelled" ? "Stopped" : chipText(f.status);
       const when = timeAgo(parseUtc(f.created_at));
-      // Thumbnail = the finished film's own first frame (no separate poster
-      // endpoint). preload=metadata fetches only headers + the seek frame.
-      const thumb = done
-        ? `<video class="lib-thumb" src="/video/${f.job_id}#t=1" preload="metadata" muted playsinline></video>`
+      // Thumbnail: /thumbnail/{id} extracts a JPEG frame past the intro and caches
+      // it on disk — served with immutable Cache-Control, so one request per job ever.
+      const thumb = playable
+        ? `<img class="lib-thumb" src="/thumbnail/${f.job_id}" loading="lazy" decoding="async" alt="">`
         : `<div class="lib-thumb ph ${kind}">${failed ? "⚠" : ""}</div>`;
       const delBtn = !RUNNING.has(f.status)
         ? `<button class="lib-del" data-del="${f.job_id}" title="Delete this film">✕</button>` : "";
-      return `<article class="lib-card ${kind}" data-id="${f.job_id}" tabindex="0" title="${esc(f.topic)}">
+      return `<article class="lib-card ${kind}" data-id="${f.job_id}" tabindex="0" title="${esc(f.script_title || f.topic)}">
         <div class="lib-pic">${thumb}<span class="lib-badge ${kind}">${esc(badge)}</span>${jobCtlBtn(f, "lib-ctl")}${delBtn}</div>
         <div class="lib-body">
-          <div class="lib-ti">${esc(f.topic || "Untitled")}</div>
+          <div class="lib-ti">${esc(f.script_title || f.topic || "Untitled")}</div>
           <div class="lib-meta"><span class="lib-chan">Kinetic Studios</span> · ${esc(when)}</div>
         </div>
       </article>`;
@@ -376,13 +389,15 @@
 
   /* ════════ THE CUT (completed) ════════ */
   function cutShell() {
-    if (!jobState || jobState.status !== "completed") {
+    if (!jobState || (jobState.status !== "completed" && jobState.status !== "partial")) {
       return `${marquee()}<div class="canvas"><div class="empty-stage">
         <h2>No finished film selected</h2>
         <p>Pick a completed film from <b>Films</b>, or describe a new idea below to shoot one.</p>
       </div></div>${overlays()}`;
     }
     const st = jobState, c = counts(st);
+    const dropped = (st.dropped_scenes || []).length;
+    const isPartial = st.status === "partial" || dropped > 0;
     const runtime = st.script?.scenes?.reduce((a, s) => a + (s.estimated_duration_seconds || 0), 0) || 0;
     const cap = st.script?.title || st.topic || "";
     const scenes = st.script?.scenes || [];
@@ -397,16 +412,44 @@
       <div class="proj">
         <div class="proj-head">
           <div>
-            <div class="meta-eyebrow"><span class="live"></span>Ready to watch · final cut</div>
-            <h1>${esc(st.topic || "Untitled")}</h1>
+            <div class="meta-eyebrow${isPartial ? " warn" : ""}"><span class="live"></span>${isPartial ? `Partial cut · ${c.rendered} of ${c.scenes} scenes rendered` : "Ready to watch · final cut"}</div>
+            <h1 title="${esc(st.topic || "")}">${esc(st.script?.title || st.topic || "Untitled")}</h1>
           </div>
+          ${scenes.length ? `<button class="tr-toggle" id="tr-toggle" aria-pressed="true" title="Show or hide the side panel"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h10M4 18h13"/></svg><span class="lbl">Panel</span></button>` : ""}
         </div>
-        <div class="screen" id="screen">${filmPlayerHtml(`/video/${selectedId}`)}</div>
+        <div class="stage${scenes.length ? " with-tr" : ""}" id="stage">
+          <div class="screen" id="screen">${filmPlayerHtml(`/video/${selectedId}`)}</div>
+          ${scenes.length ? `<aside class="sidepanel" id="sidepanel">
+            <div class="sp-tabs" role="tablist">
+              <button class="sp-tab on" data-tab="transcript" type="button" role="tab" aria-selected="true">Transcript</button>
+              <button class="sp-tab" data-tab="chat" type="button" role="tab" aria-selected="false">Ask AI</button>
+            </div>
+            <div class="sp-pane" data-pane="transcript">${transcriptHtml(st)}</div>
+            <div class="sp-pane sp-chat" data-pane="chat" hidden>
+              <div class="ask-rangectl">
+                <span class="ask-ctx" id="ask-ctx">the scene you're watching</span>
+                <button class="ask-rb" id="ask-mark-start" type="button" title="Mark range start at the current playhead">⟦ Start</button>
+                <button class="ask-rb" id="ask-mark-end" type="button" title="Mark range end at the current playhead">End ⟧</button>
+                <button class="ask-rb ask-clear" id="ask-clear" type="button" hidden>✕</button>
+              </div>
+              <div class="ask-log" id="ask-log"><div class="ask-empty">Ask anything about the section you're watching — scrub the video and your question follows along, or mark a Start/End to ask about a range.</div></div>
+              <form class="ask-input" id="ask-form" autocomplete="off">
+                <input id="ask-q" placeholder="Ask about what's happening here…" autocomplete="off"/>
+                <button class="ask-send" id="ask-send" type="submit">Ask</button>
+              </form>
+            </div>
+          </aside>` : ""}
+        </div>
       </div>
+
+      ${isPartial ? `<div class="partial-note">
+        <div class="pn-head"><b>Partial cut</b><span>${dropped} of ${c.scenes} scene${dropped === 1 ? "" : "s"} couldn't be rendered and were left out of this film.</span></div>
+        <button class="retry-btn" id="partial-resume">↻ Render the missing scenes</button>
+      </div>` : ""}
 
       <div class="ytinfo">
         <div class="yt-desc" id="yt-desc">
-          <div class="yt-stats">${c.scenes} scenes · ≈ ${fmtDur(runtime)} · 1080p MP4 · captions baked in · Kokoro voice · ${c.retries} retries auto-healed</div>
+          <div class="yt-stats">${c.rendered} of ${c.scenes} scenes · ≈ ${fmtDur(runtime)} · 1080p MP4 · captions baked in · Kokoro voice${c.retries ? ` · ${c.retries} retries` : ""}</div>
           <div class="yt-body">${esc(descText)}</div>
           <button class="yt-more" id="yt-more">…more</button>
         </div>
@@ -437,8 +480,6 @@
         </div>
       </div>
 
-      ${transcriptHtml(st)}
-
       <div class="log">
         <div class="h"><span class="l"></span><span class="t">On set</span></div>
         <div class="body" id="log-body">${synthCutLog(st)}</div>
@@ -452,7 +493,7 @@
   function filmPlayerHtml(src) {
     return `<video-player class="screenvid">
       <media-container class="media-default-skin media-default-skin--video">
-        <video src="${src}" playsinline></video>
+        <video src="${src}" playsinline controls><track kind="captions" srclang="en" label="English" src="${src.replace('/video/', '/captions/')}"></video>
 
         <media-buffering-indicator class="media-buffering-indicator">
           <div class="media-surface"><media-icon name="spinner" class="media-icon"></media-icon></div>
@@ -504,7 +545,7 @@
             </div>
 
             <div class="media-button-group">
-              <media-playback-rate-menu-trigger commandfor="playback-rate-menu" class="media-button media-button--subtle media-button--icon media-button--playback-rate"></media-playback-rate-menu-trigger>
+              <media-playback-rate-menu-trigger commandfor="playback-rate-menu" data-rate="1" class="media-button media-button--subtle media-button--icon media-button--playback-rate"></media-playback-rate-menu-trigger>
               <media-playback-rate-menu id="playback-rate-menu" side="top" align="center" class="media-surface media-popover media-menu media-menu--playback-rate">
                 <media-playback-rate-options class="media-menu__group">
                   <template>
@@ -565,7 +606,13 @@
         <media-gesture type="doubletap" action="toggleFullscreen" region="center"></media-gesture>
         <media-gesture type="doubletap" action="seekStep" value="10" region="right"></media-gesture>
       </media-container>
-    </video-player>`;
+    </video-player>
+    <div class="cc-settings-bar">
+      <span class="cc-settings-label">CC size</span>
+      <button class="cc-sz on" data-sz="0.85em" title="Small captions">S</button>
+      <button class="cc-sz" data-sz="1.1em" title="Medium captions">M</button>
+      <button class="cc-sz" data-sz="1.5em" title="Large captions">L</button>
+    </div>`;
   }
 
   function frameHtml(s, st, i) {
@@ -619,10 +666,8 @@
       }
       acc += parseFloat(s.estimated_duration_seconds) || 0;
     });
-    return `<div class="transcript">
-      <div class="strip-label">Transcript <span class="ct">· click any line to jump</span></div>
-      <div class="tr-list" id="tr-list">${rows.join("")}</div>
-    </div>`;
+    return `<div class="tr-hint">Click any line to jump</div>
+      <div class="tr-list" id="tr-list">${rows.join("")}</div>`;
   }
 
   function bindTranscript() {
@@ -635,19 +680,124 @@
       try { v.currentTime = parseFloat(r.dataset.t) || 0; v.play().catch(() => {}); } catch (e) {}
     });
     const v = vidEl();
-    if (v && !v.__trBound) {
-      v.__trBound = true;
-      v.addEventListener("timeupdate", () => {
-        const ct = v.currentTime;
-        let active = null;
-        for (const r of rows) { if ((parseFloat(r.dataset.t) || 0) <= ct + 0.01) active = r; else break; }
-        if (active && !active.classList.contains("on")) {
-          rows.forEach((x) => x.classList.remove("on"));
-          active.classList.add("on");
-          active.scrollIntoView({ block: "nearest", behavior: "smooth" });
-        }
-      });
+    if (!v || v.__trBound) return;
+    v.__trBound = true;
+
+    // Highlight the transcript row that best matches a given video time.
+    function highlightAt(ct) {
+      let active = null;
+      for (const r of rows) { if ((parseFloat(r.dataset.t) || 0) <= ct + 0.1) active = r; else break; }
+      if (active && !active.classList.contains("on")) {
+        rows.forEach((x) => x.classList.remove("on"));
+        active.classList.add("on");
+        active.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
     }
+
+    // Primary: bind to VTT cuechange for exact sentence-level sync.
+    // The cue's startTime = narration time + intro_offset (already shifted by
+    // the /captions endpoint), matching data-t values in the transcript.
+    function tryCueSync() {
+      for (let i = 0; i < v.textTracks.length; i++) {
+        const t = v.textTracks[i];
+        if (t.kind !== "captions" && t.kind !== "subtitles") continue;
+        if (t.__cueBound) return;
+        t.__cueBound = true;
+        t.addEventListener("cuechange", () => {
+          const cue = t.activeCues && t.activeCues[0];
+          if (cue) highlightAt(cue.startTime);
+        });
+        return;
+      }
+    }
+    tryCueSync();
+    v.addEventListener("loadedmetadata", tryCueSync);
+
+    // Fallback: timeupdate for jobs without a VTT track.
+    v.addEventListener("timeupdate", () => highlightAt(v.currentTime));
+  }
+
+  // Pin the side panel to the video's height so both tabs are one consistent size
+  // (the panel scrolls internally). Cleared on mobile/stacked, where it flows.
+  function syncPanelHeight() {
+    const stage = document.getElementById("stage");
+    const screen = document.getElementById("screen");
+    const panel = document.getElementById("sidepanel");
+    if (!stage || !screen || !panel) return;
+    if (!stage.classList.contains("with-tr") || window.matchMedia("(max-width:900px)").matches) {
+      panel.style.height = ""; return;
+    }
+    const h = Math.round(screen.getBoundingClientRect().height);
+    panel.style.height = h > 0 ? h + "px" : "";
+  }
+
+  // Watch-page grounded chat. Context = the transcript slice for the section the
+  // viewer is on: the scene under the playhead by default, or a [start,end] range
+  // they marked. Sends that excerpt + recent turns to POST /chat (NIM-backed).
+  function bindAsk() {
+    const box = document.querySelector(".sp-chat");
+    if (!box) return;
+    const vid = () => document.querySelector("#screen video");
+    const rows = () => [...document.querySelectorAll("#tr-list .tr-row")];
+    const ctxLabel = document.getElementById("ask-ctx");
+    const clearBtn = document.getElementById("ask-clear");
+    const logEl = document.getElementById("ask-log");
+
+    const range = () => {
+      if (chatRange) return chatRange;
+      const ct = vid() ? vid().currentTime : 0;
+      const scn = rows().filter((r) => r.classList.contains("tr-scene")).map((r) => parseFloat(r.dataset.t) || 0);
+      let s = 0, e = Infinity;
+      for (let i = 0; i < scn.length; i++) { if (scn[i] <= ct + 0.01) { s = scn[i]; e = scn[i + 1] ?? Infinity; } }
+      return [s, e];
+    };
+    const sliceText = ([s, e]) => rows()
+      .filter((r) => r.classList.contains("tr-line"))
+      .filter((r) => { const t = parseFloat(r.dataset.t) || 0; return t >= s - 0.01 && t < e; })
+      .map((r) => r.querySelector(".tr-tx")?.textContent.trim()).filter(Boolean).join(" ");
+
+    const updateLabel = () => {
+      if (chatRange) { ctxLabel.textContent = `${fmtDur(chatRange[0])}–${fmtDur(chatRange[1])}`; clearBtn.hidden = false; }
+      else { ctxLabel.textContent = "the scene you're watching"; clearBtn.hidden = true; }
+    };
+    const render = () => {
+      if (!chatLog.length) { logEl.innerHTML = `<div class="ask-empty">Ask anything about the section you're watching — scrub the video and your question follows along, or mark a Start/End to ask about a range.</div>`; return; }
+      logEl.innerHTML = chatLog.map((m) => `<div class="ask-msg ${m.role}${m.typing ? " typing" : ""}">${esc(m.content)}</div>`).join("");
+      logEl.scrollTop = logEl.scrollHeight;
+    };
+
+    document.getElementById("ask-mark-start").onclick = () => {
+      askStart = vid() ? vid().currentTime : 0; chatRange = null; updateLabel();
+      ctxLabel.textContent = `from ${fmtDur(askStart)} … mark End`;
+    };
+    document.getElementById("ask-mark-end").onclick = () => {
+      const end = vid() ? vid().currentTime : 0;
+      const start = askStart != null ? askStart : 0;
+      chatRange = [Math.min(start, end), Math.max(start, end)]; askStart = null; updateLabel();
+    };
+    clearBtn.onclick = () => { chatRange = null; askStart = null; updateLabel(); };
+
+    async function send(q) {
+      q = (q || "").trim(); if (!q) return;
+      const ctx = sliceText(range());
+      const history = chatLog.filter((m) => !m.typing).slice(-6).map((m) => ({ role: m.role, content: m.content }));
+      chatLog.push({ role: "user", content: q }); render();
+      const typing = { role: "assistant", content: "…", typing: true };
+      chatLog.push(typing); render();
+      try {
+        const r = await api("/chat", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question: q, context: ctx, history, job_topic: jobState?.topic || "" }),
+        });
+        typing.content = r.reply || "(no answer)"; typing.typing = false;
+      } catch (e) { typing.content = "Couldn't reach the assistant. Try again."; typing.typing = false; }
+      render();
+    }
+
+    const form = document.getElementById("ask-form");
+    const input = document.getElementById("ask-q");
+    form.onsubmit = (e) => { e.preventDefault(); const q = input.value; input.value = ""; send(q); };
+    updateLabel(); render();
   }
 
   function synthCutLog(st) {
@@ -855,7 +1005,7 @@
       <div class="proj"><div class="proj-head">
         <div>
           <div class="meta-eyebrow ${failed ? "warn" : ""}"><span class="live"></span>${failed ? "Pipeline fault" : "In the lab · developing"}</div>
-          <h1>${esc(st.topic || "Untitled")}</h1>
+          <h1 title="${esc(st.topic || "")}">${esc(st.script?.title || st.topic || "Untitled")}</h1>
         </div>
         <div class="facts">
           ${RUNNING.has(st.status) ? `<button class="stop-btn" id="stop-btn">■ Stop</button><br>` : ""}
@@ -924,12 +1074,13 @@
     };
     // Script: done once the screenplay exists, else summoning
     setCap("script", st.script ? "done" : "cur", st.script ? `${scenes.length} scenes` : "writing");
-    // Assemble: barrier — runs at assembly, done when completed, faults if failed there
-    const asmState = st.status === "completed" ? "done"
+    // Assemble: barrier — runs at assembly, done when completed/partial, faults if failed there
+    const assembled = st.status === "completed" || st.status === "partial";
+    const asmState = assembled ? "done"
       : st.status === "assembly" ? "cur"
       : (failed && cur >= 4) ? "fail" : "wait";
     setCap("assemble", asmState, st.status === "assembly" ? "stitching" : asmState === "done" ? "stitched" : asmState === "fail" ? "fault" : "waiting");
-    setCap("film", st.status === "completed" ? "done" : "wait", st.status === "completed" ? "ready" : "—");
+    setCap("film", assembled ? "done" : "wait", st.status === "completed" ? "ready" : st.status === "partial" ? "partial" : "—");
 
     // build group lanes once scenes are known, then patch each group's discs:
     // a stage is "done" only when EVERY scene in the group finished it.
@@ -973,11 +1124,15 @@
     setText("ro-retries", "", `${c.retries}<small> retries</small>`);
     setText("ro-scenes", "", `${c.rendered}<small>/${c.scenes}</small>`);
 
-    // eta
+    // eta — prefer backend estimate (historical stage means); fall back to
+    // frontend extrapolation when backend has no data yet.
     let etaText;
-    if (st.status === "completed") etaText = "done";
+    if (st.status === "completed" || st.status === "partial") etaText = "done";
     else if (failed) etaText = "—";
-    else {
+    else if (typeof st.eta_seconds === "number" && st.eta_seconds >= 0) {
+      etaSmooth = null; // reset client-side smoothing when backend takes over
+      etaText = st.eta_seconds < 10 ? "< 10s" : `~${fmtDur(Math.min(st.eta_seconds, 99 * 60))}`;
+    } else {
       const f = pipelineFraction(st);
       if (!elapsed || elapsed < 8 || f < 0.05) etaText = "estimating…";
       else { const raw = elapsed * (1 - f) / f; etaSmooth = etaSmooth == null ? raw : etaSmooth * 0.75 + raw * 0.25; etaText = `~${fmtDur(Math.min(etaSmooth, 99 * 60))}`; }
@@ -1081,7 +1236,7 @@
         });
       }
     }
-    const sig = jobs.map((j) => j.job_id + j.status).join("|");
+    const sig = (jobsLoaded ? "1" : "0") + jobs.map((j) => j.job_id + j.status).join("|");
     if (sig !== lastJobsSig) {
       lastJobsSig = sig;
       const grid = document.getElementById("cs-grid");
@@ -1089,6 +1244,31 @@
       const lib = document.getElementById("lib-grid");
       if (lib) { lib.innerHTML = libCards(); bindLibCards(); }
     }
+  }
+
+  /* ════════ video player init (cut view) ════════ */
+  function initVideoPlayer() {
+    const vid = document.querySelector("#screen video");
+    if (!vid) return;
+
+    // Set captions tracks from 'disabled' to 'hidden' so the CC toggle works.
+    // 'disabled' = browser won't even load the VTT; media-captions-button stays
+    // inert. 'hidden' = VTT loads, cues are ready, button can toggle to 'showing'.
+    function activateCaptions() {
+      for (let i = 0; i < vid.textTracks.length; i++) {
+        const t = vid.textTracks[i];
+        if ((t.kind === "captions" || t.kind === "subtitles") && t.mode === "disabled") {
+          t.mode = "hidden";
+        }
+      }
+    }
+    activateCaptions();
+    vid.addEventListener("loadedmetadata", activateCaptions);
+
+    // Seed data-rate on the speed button so the CSS ::after shows "1×" before
+    // the web component fires. The component will overwrite this when ready.
+    const rateBtn = document.querySelector(".media-button--playback-rate");
+    if (rateBtn && !rateBtn.dataset.rate) rateBtn.dataset.rate = "1";
   }
 
   /* ════════ wiring ════════ */
@@ -1123,12 +1303,16 @@
 
     // compose entry points
     const hi = document.getElementById("home-input");
+    const growHi = () => { hi.style.height = "auto"; hi.style.height = hi.scrollHeight + "px"; };
     const hm = document.getElementById("home-mode");
     if (hm) hm.onchange = () => { renderMode = hm.value; };
     const hr = document.getElementById("home-roll");
     if (hr) hr.onclick = () => openSetup(hi ? hi.value : "");
-    if (hi) hi.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); openSetup(hi.value); } };
-    root.querySelectorAll(".starter").forEach((s) => s.onclick = () => { if (hi) hi.value = s.dataset.q; openSetup(s.dataset.q); });
+    if (hi) {
+      hi.oninput = growHi;
+      hi.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); openSetup(hi.value); } };
+    }
+    root.querySelectorAll(".starter").forEach((s) => s.onclick = () => { if (hi) { hi.value = s.dataset.q; growHi(); } openSetup(s.dataset.q); });
 
     const si = document.getElementById("slate-input"), sg = document.getElementById("slate-go");
     if (sg) sg.onclick = () => openSetup(si ? si.value : "");
@@ -1157,9 +1341,16 @@
       ym.textContent = open ? "show less" : "…more";
     };
 
-    // film player (cut) — video.js <video-player> default skin handles its own controls
-    // scene cards link to the real timeline: click seeks the main film to the
-    // scene's cumulative start (sum of prior scene durations), no separate player.
+    // film player (cut) — init captions + speed display, then wire scene-card seeks
+    initVideoPlayer();
+
+    // Caption size buttons: write a dynamic ::cue rule to resize native captions.
+    let _ccStyle = document.getElementById("cc-dyn-style");
+    if (!_ccStyle) { _ccStyle = document.createElement("style"); _ccStyle.id = "cc-dyn-style"; document.head.appendChild(_ccStyle); }
+    root.querySelectorAll(".cc-sz").forEach((b) => b.onclick = () => {
+      root.querySelectorAll(".cc-sz").forEach((x) => x.classList.toggle("on", x === b));
+      _ccStyle.textContent = `video::cue { font-size: ${b.dataset.sz}; }`;
+    });
     root.querySelectorAll(".frames .frame").forEach((f) => f.onclick = () => {
       const vid = document.querySelector("#screen video");
       if (!vid) return;
@@ -1171,6 +1362,58 @@
 
     // live transcript (cut view): click-seek + playhead highlight
     bindTranscript();
+    // watch-page grounded chat (cut view)
+    bindAsk();
+
+    // side-panel tabs: Transcript <-> Ask AI (either/or in one panel)
+    const spTabs = [...root.querySelectorAll(".sp-tab")];
+    if (spTabs.length) {
+      const TKEY = "ks_panel_tab";
+      const showTab = (name) => {
+        spTabs.forEach((t) => {
+          const on = t.dataset.tab === name;
+          t.classList.toggle("on", on); t.setAttribute("aria-selected", on ? "true" : "false");
+        });
+        root.querySelectorAll(".sp-pane").forEach((p) => { p.hidden = p.dataset.pane !== name; });
+        if (name === "chat") setTimeout(() => document.getElementById("ask-q")?.focus(), 0);
+        try { localStorage.setItem(TKEY, name); } catch (e) {}
+      };
+      const savedTab = localStorage.getItem(TKEY);
+      showTab(savedTab === "chat" ? "chat" : "transcript");
+      spTabs.forEach((t) => t.onclick = () => showTab(t.dataset.tab));
+    }
+
+    // transcript show/hide toggle — preference persisted across sessions
+    const trToggle = document.getElementById("tr-toggle");
+    const stage = document.getElementById("stage");
+    if (trToggle && stage) {
+      const KEY = "ks_transcript_on";
+      const saved = localStorage.getItem(KEY);
+      const setOn = (on) => {
+        stage.classList.toggle("with-tr", on);
+        trToggle.setAttribute("aria-pressed", on ? "true" : "false");
+        syncPanelHeight();
+      };
+      setOn(saved === null ? true : saved === "1");
+      trToggle.onclick = () => {
+        const now = !stage.classList.contains("with-tr");
+        setOn(now);
+        try { localStorage.setItem(KEY, now ? "1" : "0"); } catch (e) {}
+      };
+    }
+
+    // keep the side panel the same height as the video (both tabs = one size)
+    syncPanelHeight();
+    if (!window.__ksPanelSync) {
+      window.__ksPanelSync = true;
+      window.addEventListener("resize", () => { try { syncPanelHeight(); } catch (e) {} });
+    }
+    const scr = document.getElementById("screen");
+    if (scr && "ResizeObserver" in window) {
+      try { new ResizeObserver(() => syncPanelHeight()).observe(scr); } catch (e) {}
+    }
+    // video.js lays out after metadata — re-sync a couple of times early
+    setTimeout(syncPanelHeight, 120); setTimeout(syncPanelHeight, 500);
 
     // copy job id (lab)
     const jid = document.getElementById("jobid");
@@ -1182,6 +1425,9 @@
     // retry/resume a failed job from the lab error bar
     const rb = document.getElementById("retry-btn");
     if (rb) rb.onclick = () => resumeJob(selectedId, rb);
+    // resume a partial cut from the cut view to render its dropped scenes
+    const pr = document.getElementById("partial-resume");
+    if (pr) pr.onclick = () => resumeJob(selectedId, pr);
     const sb = document.getElementById("stop-btn");
     if (sb) sb.onclick = () => cancelJob(selectedId, sb);
 
@@ -1236,9 +1482,10 @@
     selectedId = id;
     jobState = null; prevState = null; etaSmooth = null;
     createdMs = null; completedMs = null; feedLines = [];
+    chatLog = []; chatRange = null; askStart = null;   // reset watch-page chat per job
     const meta = jobs.find((j) => j.job_id === id);
     if (forceView) view = forceView;
-    else view = meta && meta.status === "completed" ? "cut" : "lab";
+    else view = meta && (meta.status === "completed" || meta.status === "partial") ? "cut" : "lab";
     mountKey = null;            // force remount for new job
     pollSelected(true);
   }
@@ -1276,6 +1523,7 @@
     const a = analyzer || {};
     const qs = (Array.isArray(a.questions) ? a.questions : []).filter((q) => q.id !== "duration" && q.id !== "style");
     setupAns = {};
+    if (a.title) setText("setup-prompt", a.title);   // show the clean analyzer title, not the raw (maybe huge) prompt
     const recM = Math.round((a.recommended_duration_seconds || 300) / 60);
     const maxM = Math.max(1, Math.round((a.max_duration_seconds || 1200) / 60));
     const presets = (a.duration_presets || [90, 180, 360]).map((s) => Math.round(s / 60));
@@ -1321,6 +1569,12 @@
       </div>
     </div>`;
 
+    // free-text: optional extra steer for the writer (rides into the brief as a "focus_notes" answer)
+    html += `<div class="q" data-q="focus_notes">
+      <div class="ql"><span class="qn">${String(qs.length + 3).padStart(2, "0")}</span><span class="qt">Anything specific to focus on or avoid?</span><span class="qh">optional</span></div>
+      <textarea class="notes-input" id="setup-notes" rows="2" placeholder="e.g. emphasize the proof, keep it beginner-friendly, avoid jargon…"></textarea>
+    </div>`;
+
     setText("setup-qs", "", html);
     wireSetupQuestions();
   }
@@ -1353,6 +1607,8 @@
       const qid = inp.closest(".other-wrap").dataset.q;
       inp.oninput = () => { (setupAns[qid] = setupAns[qid] || { selected: [], custom: "" }).custom = inp.value.trim(); };
     });
+    const notes = document.getElementById("setup-notes");
+    if (notes) notes.oninput = () => { (setupAns["focus_notes"] = setupAns["focus_notes"] || { selected: [], custom: "" }).custom = notes.value.trim(); };
     // duration
     qroot.querySelectorAll("#dur-presets .opt").forEach((p) => p.onclick = () => {
       qroot.querySelectorAll("#dur-presets .opt").forEach((x) => x.classList.remove("sel"));
@@ -1383,15 +1639,23 @@
     if (setupOpen) closeSetup();
   }
 
-  function pickAnswer(id) { const a = setupAns[id]; if (!a) return null; if (a.selected.length) return a.selected.join(", "); return a.custom || null; }
+  // Matches AI_DECIDE_LABEL in services/script-writer/app/analyzer.py — selecting
+  // it means "defer to the model", so it's stripped out of the submitted brief.
+  const AI_DECIDE = "Decide for me";
+  function pickAnswer(id) {
+    const a = setupAns[id]; if (!a) return null;
+    const sel = (a.selected || []).filter((x) => x !== AI_DECIDE);
+    if (sel.length) return sel.join(", ");
+    return a.custom || null;
+  }
   function buildBrief() {
     const a = analyzer || {};
     const answers = Object.entries(setupAns)
       .filter(([k]) => k !== "__minutes")
-      .filter(([, v]) => v && (v.selected.length || v.custom))
-      .map(([question_id, v]) => ({ question_id, selected: v.selected, custom_text: v.custom || null }));
+      .map(([question_id, v]) => ({ question_id, selected: (v?.selected || []).filter((x) => x !== AI_DECIDE), custom_text: v?.custom || null }))
+      .filter((ans) => ans.selected.length || ans.custom_text);
     const focusAns = setupAns["focus"];
-    const focus_areas = focusAns ? focusAns.selected.concat(focusAns.custom ? [focusAns.custom] : []) : [];
+    const focus_areas = focusAns ? focusAns.selected.filter((x) => x !== AI_DECIDE).concat(focusAns.custom ? [focusAns.custom] : []) : [];
     return {
       target_duration_seconds: (setupAns.__minutes || Math.round((a.recommended_duration_seconds || 300) / 60)) * 60,
       max_duration_seconds: a.max_duration_seconds,
@@ -1474,7 +1738,7 @@
 
   /* ════════ polling ════════ */
   async function pollFleet() { try { health = await api("/services/health"); } catch { health = null; } if (view === "home" || mountKey) patchChrome(); }
-  async function pollJobs() { try { jobs = await api("/jobs?limit=60"); } catch { /* keep */ } patchChrome(); }
+  async function pollJobs() { try { jobs = await api("/jobs?limit=60"); jobsLoaded = true; } catch { /* keep */ } patchChrome(); }
 
   async function pollSelected(force) {
     if (!selectedId) return;
@@ -1485,7 +1749,7 @@
 
     // auto-route on completion (unless user is on Home, Library, or composing)
     if (!setupOpen && view !== "home" && view !== "library") {
-      const desired = state.status === "completed" ? "cut" : "lab";
+      const desired = (state.status === "completed" || state.status === "partial") ? "cut" : "lab";
       if (desired !== view) { view = desired; mountKey = null; }
     }
     const remounted = ensureMounted();

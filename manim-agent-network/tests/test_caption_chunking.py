@@ -88,7 +88,7 @@ def test_compose_html_chunked_captions(tmp_path):
     timings = [_timing(1, 0.0, 10.0, 12.0, str(comp / "scene1.mp4"), str(comp / "scene1.wav"))]
     scene_plans = [{"scene_id": 1, "narration_text": narration, "content_type": "manim"}]
 
-    fake = type("S", (), {"WORKSPACE_DIR": str(tmp_path)})()
+    fake = type("S", (), {"WORKSPACE_DIR": str(tmp_path), "BURN_CAPTIONS": True})()
     with patch.object(llm_composer, "settings", fake):
         html_path = compose_html("Title", timings, {}, job_id, scene_plans)
     html = open(html_path, encoding="utf-8").read()
@@ -118,7 +118,7 @@ def test_compose_html_non_caption_clips_never_on_caption_track(tmp_path):
     timings = [_timing(1, 0.0, 6.0, 6.0, str(comp / "s1.mp4"), str(comp / "s1.wav"))]
     scene_plans = [{"scene_id": 1, "narration_text": "Hello there world.", "content_type": "manim"}]
 
-    fake = type("S", (), {"WORKSPACE_DIR": str(tmp_path)})()
+    fake = type("S", (), {"WORKSPACE_DIR": str(tmp_path), "BURN_CAPTIONS": True})()
     with patch.object(llm_composer, "settings", fake):
         html_path = compose_html("T", timings, {}, job_id, scene_plans)
     html = open(html_path, encoding="utf-8").read()

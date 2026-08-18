@@ -19,12 +19,16 @@ ENV NODE_PATH=/usr/local/lib/node_modules
 # Create symlink so `hyperframes` is directly callable as well
 RUN ln -sf /usr/local/lib/node_modules/hyperframes/bin/hyperframes.js /usr/local/bin/hyperframes 2>/dev/null || true
 
-# Install Chromium for HyperFrames rendering
-# HyperFrames needs a headless browser to render HTML to video frames
+# Install Chromium + EGL/OpenGL libs for HyperFrames GPU rendering.
+# libegl1/libgl1-mesa-dri: Chrome --use-gl=egl path (--browser-gpu flag).
+# When the NVIDIA runtime injects libEGL_nvidia.so, Chrome selects GPU EGL.
 RUN apt-get update && \
     apt-get install -y \
     chromium \
     chromium-driver \
+    libegl1 \
+    libgl1-mesa-dri \
+    libgles2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set environment variable to tell Puppeteer/HyperFrames where to find Chromium

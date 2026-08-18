@@ -1,6 +1,7 @@
 from fastapi import FastAPI, BackgroundTasks, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+import re as _re
 from shared.schemas.common import GenerationRequest, JobState, AnalyzeRequest, TopicAnalysis
 from shared.models.agent_state import LangGraphState
 from shared.config import settings
@@ -8,12 +9,15 @@ from shared.log import get_logger, set_log_context, clear_log_context, make_requ
 from shared.timeouts import job_wallclock_timeout_s
 from app.core.graph import app_graph
 from app.db import db
+from shared.llm_client import get_llm_client
 from langsmith import traceable
+from pydantic import BaseModel
 from pathlib import Path
 import httpx
 import asyncio
 import uuid
 import time
+import os
 
 app = FastAPI(title="Orchestrator Service")
 app.add_middleware(make_request_logging_middleware("orchestrator"))
@@ -32,8 +36,9 @@ _CANCEL: set[str] = set()
 @app.on_event("startup")
 async def _validate_config() -> None:
     # Fail fast on missing credentials rather than 401-ing under load.
-    if not settings.NVIDIA_API_KEY:
-        raise RuntimeError("NVIDIA_API_KEY is required but not set")
+    # Either provider's key satisfies it — slots may route to NIM or Claude.
+    if not settings.NVIDIA_API_KEY and not settings.ANTHROPIC_API_KEY:
+        raise RuntimeError("No LLM key set: need NVIDIA_API_KEY or ANTHROPIC_API_KEY")
 
 
 async def _resume_worker(jobs: list) -> None:
@@ -46,11 +51,40 @@ async def _resume_worker(jobs: list) -> None:
     """
     for job in jobs:
         st = job["state"]
-        logger.info("Resuming orphaned job", extra={"job_id": job["job_id"], "status": st.get("status")})
+        job_id = job["job_id"]
+        # Assembly already completed but status was never written (crash between
+        # assembler_node return and the final db.update_job call). Auto-heal:
+        # mark completed/partial and skip re-driving the pipeline — but ONLY if the
+        # file is actually present and non-empty. A truthy path pointing at a
+        # missing/zero-byte file (crash mid-write, cleaned volume) must NOT be
+        # healed to "completed"; fall through and re-drive the pipeline instead.
+        final_path = st.get("final_output_path")
+        if final_path and os.path.exists(final_path) and os.path.getsize(final_path) > 0:
+            final_status = "partial" if st.get("dropped_scenes") else "completed"
+            logger.info("Auto-healing assembled job with stale status",
+                        extra={"job_id": job_id, "corrected_status": final_status})
+            db.update_job(job_id, {**st, "status": final_status})
+            _DRIVING.discard(job_id)  # Pre-claimed by _resume_running_jobs; release since we skip run_pipeline
+            continue
+        if final_path:
+            logger.warning("Orphan job has final_output_path but file is missing/empty — re-driving",
+                           extra={"job_id": job_id, "path": final_path})
+        logger.info("Resuming orphaned job", extra={"job_id": job_id, "status": st.get("status")})
+        # Reset retry state so scenes that hit the limit before the crash get
+        # fresh attempts — same logic as the /resume endpoint. render_paths is
+        # kept so already-rendered scenes are not re-done.
+        st["retry_counts"] = {}
+        st["infra_retry_counts"] = {}
+        st["error_logs"] = {}
+        st["code_paths"] = {}
         try:
-            await run_pipeline(job["job_id"], st.get("topic", ""), st.get("brief"), resume_state=st)
+            # _slot_preclaimed=True: _resume_running_jobs already added job_id to
+            # _DRIVING before the event loop could accept /resume requests, so we
+            # skip the internal check+add in run_pipeline.
+            await run_pipeline(job_id, st.get("topic", ""), st.get("brief"),
+                               resume_state=st, _slot_preclaimed=True)
         except Exception as e:
-            logger.error("Resumed job failed", extra={"job_id": job["job_id"], "error": str(e)})
+            logger.error("Resumed job failed", extra={"job_id": job_id, "error": str(e)})
 
 
 @app.on_event("startup")
@@ -70,8 +104,11 @@ async def _resume_running_jobs() -> None:
     if not running:
         return
     logger.info("Resuming orphaned jobs serially", extra={"count": len(running)})
-    # One background driver processes the queue serially — never blocks startup,
-    # never floods the fleet.
+    # Pre-claim _DRIVING for all orphaned jobs BEFORE yielding to the event loop.
+    # Without this, a /resume request arriving between create_task() and the first
+    # run_pipeline() execution would pass the _DRIVING guard and double-drive the job.
+    for job in running:
+        _DRIVING.add(job["job_id"])
     asyncio.create_task(_resume_worker(running))
 
 
@@ -79,13 +116,17 @@ async def _resume_running_jobs() -> None:
 # @traceable no-ops when those are unset, so this is safe to leave on always.
 @traceable(run_type="chain", name="orchestrator.pipeline")
 async def run_pipeline(job_id: str, topic: str, brief: dict | None = None,
-                       resume_state: LangGraphState | None = None):
+                       resume_state: LangGraphState | None = None,
+                       _slot_preclaimed: bool = False):
     set_log_context(job_id=job_id)
     # Guard against a second concurrent driver for the same job.
-    if job_id in _DRIVING:
-        logger.warning("Pipeline already running for this job — skipping duplicate driver")
-        return {"status": "already_running"}
-    _DRIVING.add(job_id)
+    # If the caller pre-claimed the slot (added to _DRIVING before scheduling),
+    # skip the check+add here — the slot is already held.
+    if not _slot_preclaimed:
+        if job_id in _DRIVING:
+            logger.warning("Pipeline already running for this job — skipping duplicate driver")
+            return {"status": "already_running"}
+        _DRIVING.add(job_id)
     logger.info("Pipeline starting", extra={"topic": topic, "resumed": resume_state is not None})
 
     start_time = time.time()
@@ -97,12 +138,30 @@ async def run_pipeline(job_id: str, topic: str, brief: dict | None = None,
         "job_id": job_id, "topic": topic, "status": "pending",
         "script": None, "code_paths": {}, "render_paths": {}, "audio_paths": {},
         "image_paths": {},
-        "retry_counts": {}, "error_logs": {}, "previous_code": {},
+        "retry_counts": {}, "infra_retry_counts": {}, "error_logs": {},
+        "error_history": {}, "previous_code": {},
         "final_output_path": None, "overall_error": None,
         "brief": brief, "script_meta": None,
+        "eta_seconds": None, "stage_timings": {}, "node_timings": [],
     }
 
     timeout_s = job_wallclock_timeout_s((brief or {}).get("target_duration_seconds"))
+
+    # Ordered pipeline stages for ETA computation. Maps status name → position.
+    _STAGE_ORDER = [
+        "script_generation",
+        "code_generation",
+        "validation",
+        "voiceover_and_images",
+        "voiceover",
+        "image_fetch",
+        "assembly",
+    ]
+    # Normalise aliases: voiceover-only and image_fetch-only both stand in for
+    # voiceover_and_images for ETA purposes (same position in the pipeline).
+    _STAGE_ETA_KEY = {s: s for s in _STAGE_ORDER}
+    _STAGE_ETA_KEY["voiceover"] = "voiceover_and_images"
+    _STAGE_ETA_KEY["image_fetch"] = "voiceover_and_images"
 
     # Track the latest streamed state at run_pipeline scope so a timeout/crash
     # mid-stream can persist a 'failed' record that PRESERVES progress (script,
@@ -111,15 +170,65 @@ async def run_pipeline(job_id: str, topic: str, brief: dict | None = None,
     # back onto initial_state.
     last_state: LangGraphState = dict(initial_state)
 
+    # Stage timing tracking (in-memory during the run).
+    _stage_start: dict[str, float] = {}   # stage -> wall-clock start
+    _stage_done: dict[str, float] = {}    # stage -> elapsed seconds
+    _prev_status: str | None = None
+
+    def _scene_count(st: dict) -> int:
+        return len((st.get("script") or {}).get("scenes", []))
+
+    def _compute_eta(st: dict) -> float | None:
+        """Remaining seconds estimate from historical stage means + current progress."""
+        current = st.get("status", "")
+        n_scenes = _scene_count(st)
+        now = time.time()
+
+        # Position of current stage in the ordered list (use alias key).
+        canonical = _STAGE_ETA_KEY.get(current, current)
+        try:
+            cur_idx = _STAGE_ORDER.index(canonical)
+        except ValueError:
+            return None  # pre-script or terminal status — no estimate
+
+        # Remaining in the current stage: mean - already spent, floored at 0.
+        eta = 0.0
+        stage_elapsed = now - _stage_start.get(current, now)
+        mean_cur = db.get_stage_mean(canonical, n_scenes)
+        if mean_cur is not None:
+            eta += max(0.0, mean_cur - stage_elapsed)
+
+        # Full means for each stage not yet started.
+        for stage in _STAGE_ORDER[cur_idx + 1:]:
+            mean = db.get_stage_mean(stage, n_scenes)
+            if mean is not None:
+                eta += mean
+
+        return eta if (mean_cur is not None or eta > 0) else None
+
     try:
         async def _run_streaming():
-            # Persist state after every graph node so /job/{id} reflects live progress.
-            nonlocal last_state
+            nonlocal last_state, _prev_status
             async for state in app_graph.astream(initial_state, stream_mode="values"):
                 last_state = state
-                db.update_job(job_id, state)
-                # User pressed Stop: halt between nodes, preserving progress so the
-                # job can be resumed. Raise CancelledError to unwind the stream.
+                current_status = state.get("status", "")
+                now = time.time()
+
+                # Detect stage transition → record completed stage duration.
+                if current_status != _prev_status:
+                    if _prev_status and _prev_status in _stage_start:
+                        _stage_done[_STAGE_ETA_KEY.get(_prev_status, _prev_status)] = (
+                            now - _stage_start[_prev_status]
+                        )
+                    _stage_start[current_status] = now
+                    _prev_status = current_status
+
+                # Compute and inject backend ETA into every state write.
+                eta = _compute_eta(state)
+                enriched = {**state, "eta_seconds": eta, "stage_timings": dict(_stage_done)}
+                db.update_job(job_id, enriched)
+                last_state = enriched
+
                 if job_id in _CANCEL:
                     _CANCEL.discard(job_id)
                     logger.info("Pipeline cancelled by user")
@@ -132,18 +241,28 @@ async def run_pipeline(job_id: str, topic: str, brief: dict | None = None,
         )
         db.update_job(job_id, final_state)
         elapsed = time.time() - start_time
-        scene_count = len((final_state.get("script") or {}).get("scenes", []))
+        n_scenes = _scene_count(final_state)
         logger.info(
             "Pipeline finished",
-            extra={"status": final_state["status"], "scenes": scene_count, "elapsed_s": round(elapsed, 2)},
+            extra={"status": final_state["status"], "scenes": n_scenes,
+                   "elapsed_s": round(elapsed, 2)},
         )
-        # Returned value is captured as the trace's outputs by @traceable.
-        return {"status": final_state.get("status"), "scenes": scene_count,
+
+        # Persist per-stage actuals to stage_stats for future ETA predictions.
+        # Record the final stage too (assembler → completed transition).
+        if _prev_status and _prev_status in _stage_start:
+            _stage_done[_STAGE_ETA_KEY.get(_prev_status, _prev_status)] = (
+                time.time() - _stage_start[_prev_status]
+            )
+        for stage, elapsed_s in _stage_done.items():
+            try:
+                db.record_stage_timing(stage, elapsed_s, n_scenes)
+            except Exception:
+                pass  # never let stats writes crash a completed job
+
+        return {"status": final_state.get("status"), "scenes": n_scenes,
                 "elapsed_s": round(elapsed, 2)}
     except asyncio.CancelledError:
-        # User-initiated stop. Persist a 'cancelled' record that KEEPS progress
-        # (renders/audio) so Resume can pick it back up. Don't re-raise — this is
-        # a clean, expected stop, not a crash.
         logger.info("Pipeline stopped (cancelled)")
         db.update_job(job_id, {**last_state, "status": "cancelled",
                                "overall_error": "Stopped by user."})
@@ -158,8 +277,10 @@ async def run_pipeline(job_id: str, topic: str, brief: dict | None = None,
             "overall_error": f"Job exceeded wall-clock timeout of {timeout_s}s",
         }
         db.update_job(job_id, failed_state)
-        # Re-raise so the trace records the failure, not a silent success.
-        raise
+        # Do NOT re-raise: run_pipeline executes inside BackgroundTasks where an
+        # exception has no handler — it would only produce an unhandled-task
+        # traceback after the failure is already persisted above.
+        return {"status": "failed", "reason": "wallclock_timeout"}
     except Exception as e:
         elapsed = time.time() - start_time
         logger.error("Pipeline crashed", extra={"elapsed_s": round(elapsed, 2)}, exc_info=True)
@@ -169,9 +290,10 @@ async def run_pipeline(job_id: str, topic: str, brief: dict | None = None,
             "overall_error": str(e),
         }
         db.update_job(job_id, failed_state)
-        raise
+        return {"status": "failed", "reason": "crash"}
     finally:
         _DRIVING.discard(job_id)
+        _CANCEL.discard(job_id)
         clear_log_context()
 
 
@@ -216,8 +338,12 @@ async def start_generation(request: GenerationRequest, background_tasks: Backgro
         "brief": brief,
     })
 
-    # Start LangGraph pipeline in background
-    background_tasks.add_task(run_pipeline, job_id, request.topic, brief)
+    # Pre-claim the driving slot BEFORE scheduling the background task.
+    # Without this, a concurrent /resume (or startup re-drive) could pass the
+    # _DRIVING guard in run_pipeline before the task starts executing.
+    _DRIVING.add(job_id)
+    background_tasks.add_task(run_pipeline, job_id, request.topic, brief,
+                               _slot_preclaimed=True)
 
     return {"job_id": job_id, "message": "Generation started."}
 
@@ -238,7 +364,7 @@ async def cancel_job(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
     if job_id not in _DRIVING:
         # No live driver — just mark it cancelled if it's still in a running state.
-        if state.get("status") not in ("completed", "failed", "cancelled"):
+        if state.get("status") not in ("completed", "partial", "failed", "cancelled"):
             db.update_job(job_id, {**state, "status": "cancelled",
                                    "overall_error": "Stopped by user."})
         return {"job_id": job_id, "message": "Job not actively running; marked cancelled."}
@@ -275,18 +401,37 @@ async def resume_job(job_id: str, background_tasks: BackgroundTasks):
     # the persisted status is a mid-pipeline running state.
     if job_id in _DRIVING:
         raise HTTPException(status_code=409, detail="Job is already running")
-    if state.get("status") not in ("failed", "cancelled", "starting", "pending", "code_generation",
-                                   "image_fetch", "voiceover", "validation", "voiceover_and_images",
+    if state.get("status") not in ("failed", "partial", "cancelled", "starting", "pending", "code_generation",
+                                   "image_fetch", "voiceover", "validation", "resuming",
                                    "assembly", "script_generation"):
         raise HTTPException(status_code=409, detail=f"Job is {state.get('status')}; cannot resume")
 
+    # Pre-claim slot BEFORE scheduling — eliminates TOCTOU race where startup
+    # _resume_running_jobs or a second /resume request slips past the guard above
+    # before the background task actually starts executing run_pipeline.
+    _DRIVING.add(job_id)
+
     state.pop("webhook_url", None)
-    state["status"] = "validation"
+    # Neutral status: the graph's resume-safe skips (script present, renders
+    # present, audio present) decide where work actually restarts — faking a
+    # mid-pipeline status here only confuses the stage tracker/ETA.
+    state["status"] = "resuming"
     state["overall_error"] = None
+    # Reset per-scene retry counters so every scene gets another full budget.
+    # Without this, a job that exhausted all retries would immediately route to
+    # "failed" again — code_generator_node filters out any exhausted scene,
+    # validator has nothing, validation_router → failed. Same for code_paths:
+    # stale failed-code entries prevent fresh generation. previous_code is KEPT —
+    # it is the retry context that makes the next attempt better than the last.
+    state["retry_counts"] = {}
+    state["infra_retry_counts"] = {}
+    state["error_logs"] = {}
+    state["code_paths"] = {}
     db.update_job(job_id, state)
 
     background_tasks.add_task(
-        run_pipeline, job_id, state.get("topic", ""), state.get("brief"), state
+        run_pipeline, job_id, state.get("topic", ""), state.get("brief"), state,
+        True  # _slot_preclaimed
     )
     return {"job_id": job_id, "message": "Resume started."}
 
@@ -295,9 +440,60 @@ async def list_jobs(status: str | None = None, limit: int = 100):
     return db.list_jobs(status=status, limit=min(limit, 200))
 
 
+class ChatTurn(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    question: str
+    context: str = ""          # transcript excerpt for the section the viewer is on
+    history: list[ChatTurn] = []
+    job_topic: str | None = None
+
+
+@app.post("/chat", response_model=dict)
+async def chat(req: ChatRequest):
+    """Grounded mini-chat for the watch page. The frontend sends the transcript
+    slice for the section the viewer is watching (or a range they marked); the
+    answer is grounded on THAT excerpt, not the whole film. Reuses the NIM client."""
+    q = (req.question or "").strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="Empty question")
+    excerpt = (req.context or "").strip()
+    system = (
+        "You help a viewer understand the video they are watching. "
+        f"The film is about: {req.job_topic or 'unknown topic'}.\n"
+        "They are asking about THIS portion of the narration (the part on screen):\n"
+        f'"""\n{excerpt or "(no transcript available for this section)"}\n"""\n'
+        "Answer using this excerpt as the primary source; you may add brief general "
+        "explanation to make it clear. If the excerpt does not cover the question, say "
+        "you can only see the part they are currently watching and suggest they scrub to "
+        "that moment or mark a range. Keep it to 2-4 plain sentences. No markdown headers."
+    )
+    messages = [{"role": "system", "content": system}]
+    for t in req.history[-6:]:
+        if t.role in ("user", "assistant") and t.content:
+            messages.append({"role": t.role, "content": t.content})
+    messages.append({"role": "user", "content": q})
+    try:
+        client = get_llm_client()
+        resp = await client.chat.completions.acreate(
+            model=settings.CHAT_MODEL, messages=messages,
+            max_tokens=500, temperature=0.3,
+        )
+        reply = (resp.choices[0].message.content or "").strip()
+    except Exception as e:
+        logger.error("Chat failed", extra={"error": str(e)})
+        raise HTTPException(status_code=502, detail="Chat backend error")
+    return {"reply": reply or "(no answer)"}
+
+
 def _safe_workspace_file(path_str: str) -> Path:
-    """Resolve a workspace path, rejecting anything outside /workspace."""
-    workspace = Path("/workspace").resolve()
+    """Resolve a workspace path, rejecting anything outside the workspace dir."""
+    # Jail root must match where producers actually write (settings.WORKSPACE_DIR),
+    # not a hardcoded "/workspace" — otherwise a relocated workspace 403s every file.
+    workspace = Path(settings.WORKSPACE_DIR).resolve()
     resolved = Path(path_str).resolve()
     if not resolved.is_relative_to(workspace):
         raise HTTPException(status_code=403, detail="Path outside workspace")
@@ -318,8 +514,88 @@ async def get_video(job_id: str):
                         filename=f"{job_id}.mp4")
 
 
+def _shift_vtt(content: str, offset_s: float) -> str:
+    """Shift all VTT timestamps forward by offset_s seconds (intro prepended to final video)."""
+    def _parse(ts: str) -> float:
+        parts = ts.split(":")
+        if len(parts) == 3:
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+        return int(parts[0]) * 60 + float(parts[1])
+
+    def _fmt(secs: float) -> str:
+        h = int(secs // 3600); m = int((secs % 3600) // 60); s = secs % 60
+        return f"{h:02d}:{m:02d}:{s:06.3f}"
+
+    def _sub(m):
+        return f"{_fmt(_parse(m.group(1)) + offset_s)} --> {_fmt(_parse(m.group(2)) + offset_s)}"
+
+    TS = r"(\d+(?::\d+)?:\d+\.\d+)"
+    return _re.sub(rf"{TS}\s*-->\s*{TS}", _sub, content)
+
+
+@app.get("/captions/{job_id}")
+async def get_captions(job_id: str):
+    """Serve WebVTT shifted by intro_duration_seconds so captions sync with the final
+    video (which has the intro clip prepended before the narration content)."""
+    state = db.get_job(job_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    path = state.get("final_output_path")
+    if not path:
+        raise HTTPException(status_code=404, detail="Captions not ready")
+    vtt_path = _safe_workspace_file(str(Path(path).with_name(f"{job_id}.vtt")))
+    intro_offset = float(state.get("intro_duration_seconds") or 0)
+    if intro_offset <= 0:
+        return FileResponse(vtt_path, media_type="text/vtt", filename=f"{job_id}.vtt")
+    try:
+        content = Path(vtt_path).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Caption file not found")
+    shifted = _shift_vtt(content, intro_offset)
+    return Response(content=shifted, media_type="text/vtt",
+                    headers={"Content-Disposition": f'inline; filename="{job_id}.vtt"'})
+
+
+@app.get("/thumbnail/{job_id}")
+async def get_thumbnail(job_id: str):
+    """Extract and cache a single JPEG frame from the final video, seeked past the
+    intro so the library card shows real content. Generated once, served forever."""
+    import subprocess, asyncio
+    state = db.get_job(job_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    path = state.get("final_output_path")
+    if not path:
+        raise HTTPException(status_code=404, detail="Video not ready")
+    video_path = Path(_safe_workspace_file(path))
+    thumb_path = video_path.with_name(f"{job_id}_thumb.jpg")
+    if not thumb_path.exists():
+        intro_offset = float(state.get("intro_duration_seconds") or 0)
+        seek_s = intro_offset + 5.0
+        cmd = [
+            "ffmpeg", "-y", "-ss", str(seek_s),
+            "-i", str(video_path),
+            "-vframes", "1", "-q:v", "4",
+            "-vf", "scale=480:-2",
+            str(thumb_path),
+        ]
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            await asyncio.wait_for(proc.communicate(), timeout=30)
+        except Exception as e:
+            logger.warning("Thumbnail generation failed", extra={"job_id": job_id, "error": str(e)})
+            raise HTTPException(status_code=500, detail="Thumbnail generation failed")
+        if not thumb_path.exists():
+            raise HTTPException(status_code=500, detail="Thumbnail generation failed")
+    return FileResponse(str(thumb_path), media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
 @app.get("/video/{job_id}/scene/{scene_id}")
-async def get_scene_video(job_id: str, scene_id: str):
+async def get_scene_video(job_id: str, scene_id: int):
+    # scene_id typed int: render_paths is int-keyed (db revives JSON str keys);
+    # a str path param could never match and every lookup 404'd.
     state = db.get_job(job_id)
     if state is None:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -365,6 +641,35 @@ async def services_health():
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+# --- admin (no auth — dev only) ----------------------------------------------
+@app.get("/admin/jobs")
+def admin_jobs():
+    return db.list_jobs(limit=200)
+
+
+@app.get("/admin/analytics")
+def admin_analytics():
+    jobs = db.list_jobs(limit=1000)
+    by_status: dict[str, int] = {}
+    for j in jobs:
+        s = j.get("status", "unknown")
+        by_status[s] = by_status.get(s, 0) + 1
+    return {"total": len(jobs), "by_status": by_status, "month": "", "minutes_used": 0, "minute_budget": 0}
+
+
+@app.get("/admin/users")
+def admin_users():
+    return []
+
+
+@app.get("/admin/cost")
+def admin_cost():
+    jobs = db.list_jobs(limit=1000)
+    active = sum(1 for j in jobs if j.get("status") in ("running", "starting", "queued"))
+    return {"month": "", "minutes_used": 0, "minute_budget": 0, "minutes_remaining": 0,
+            "active_jobs": active, "global_concurrency_cap": 0, "daily_job_quota_default": 0}
 
 
 # Serve the frontend (mounted last so API routes take precedence).

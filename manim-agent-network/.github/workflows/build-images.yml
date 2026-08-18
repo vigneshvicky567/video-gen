@@ -39,13 +39,18 @@ jobs:
       # base first — MUST exist under the local tag `base-manim-agent:latest`
       # because the service Dockerfiles do `FROM base-manim-agent`. A registry-only
       # push would leave the service builds unable to resolve their base.
+      # Every image is pushed with BOTH an immutable :<sha> tag and :latest —
+      # a render job dispatched with IMAGE_TAG=<sha> can never be silently
+      # changed underneath by a later build.
       - name: Build base (local tag + push)
         run: |
           set -euo pipefail
           docker build -f infrastructure/docker/Dockerfile.base \
             -t base-manim-agent:latest \
-            -t "${REGISTRY}/base-manim-agent:latest" .
+            -t "${REGISTRY}/base-manim-agent:latest" \
+            -t "${REGISTRY}/base-manim-agent:${GITHUB_SHA}" .
           docker push "${REGISTRY}/base-manim-agent:latest"
+          docker push "${REGISTRY}/base-manim-agent:${GITHUB_SHA}"
 
       - name: Build & push services
         run: |
@@ -53,8 +58,10 @@ jobs:
           for svc in orchestrator script-writer code-generator validator voiceover compositor image-fetcher; do
             echo "::group::build $svc"
             docker build -f "infrastructure/docker/Dockerfile.$svc" \
-              -t "${REGISTRY}/$svc:latest" .
+              -t "${REGISTRY}/$svc:latest" \
+              -t "${REGISTRY}/$svc:${GITHUB_SHA}" .
             docker push "${REGISTRY}/$svc:latest"
+            docker push "${REGISTRY}/$svc:${GITHUB_SHA}"
             echo "::endgroup::"
           done
 
@@ -64,5 +71,7 @@ jobs:
         with:
           context: .
           file: services/web-tier/Dockerfile
-          tags: ${{ env.REGISTRY }}/web-tier:latest
+          tags: |
+            ${{ env.REGISTRY }}/web-tier:latest
+            ${{ env.REGISTRY }}/web-tier:${{ github.sha }}
           push: true

@@ -9,6 +9,7 @@ import uuid
 
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -123,19 +124,24 @@ def generate(payload: GenerateIn, request: Request, p: Principal = Depends(requi
 
     _maybe_sweep()  # free up dead jobs before counting against caps
 
-    # quotas + monthly Actions-minute budget (keeps the $0 / 3000-min guarantee)
+    # quotas + monthly Actions-minute budget (keeps the $0 / 3000-min guarantee).
+    # Gates + insert run in ONE transaction (db.create_job_gated) so concurrent
+    # requests can't both slip past a read-then-insert check.
     user = db.get_or_create_user(p.clerk_id, p.email, p.role)
     quota = user.get("daily_job_quota") or settings.DAILY_JOB_QUOTA_DEFAULT
-    if db.count_user_jobs_today(p.clerk_id) >= quota:
-        raise HTTPException(429, "daily job quota reached")
-    if db.count_active_jobs() >= settings.GLOBAL_CONCURRENCY_CAP:
-        raise HTTPException(429, "system busy — try again shortly")
-    if db.global_month_minutes(_month()) >= settings.MONTHLY_MINUTE_BUDGET:
-        metrics.emit("manim.budget.blocked")
-        raise HTTPException(429, "monthly render budget reached — resets next month")
-
     job_id = str(uuid.uuid4())
-    db.create_job(job_id, p.clerk_id, topic, brief, target, idempotency_key=idem)
+    job, reason = db.create_job_gated(
+        job_id, p.clerk_id, topic, brief, target,
+        daily_quota=quota,
+        global_cap=settings.GLOBAL_CONCURRENCY_CAP,
+        month=_month(),
+        month_budget=settings.MONTHLY_MINUTE_BUDGET,
+        idempotency_key=idem,
+    )
+    if job is None:
+        if "budget" in reason:
+            metrics.emit("manim.budget.blocked")
+        raise HTTPException(429, reason)
 
     ok, code = dispatch.dispatch_render(job_id)
     if not ok and code not in (0,):  # 0 = dispatch not configured (local/dev): leave queued
@@ -162,6 +168,44 @@ def get_job(job_id: str, p: Principal = Depends(require_user)):
     if not row or row["owner_user_id"] != p.clerk_id:
         raise HTTPException(404, "not found")   # 404 (not 403) — no existence leak
     return _public_job(row)
+
+
+def _proxy_to_orchestrator(method: str, path: str) -> dict:
+    """Proxy a request to the orchestrator when ORCHESTRATOR_URL is configured."""
+    if not settings.ORCHESTRATOR_URL:
+        raise HTTPException(503, "Cancel/resume not available: orchestrator is ephemeral (GitHub Actions). "
+                                 "Set ORCHESTRATOR_URL to enable direct orchestrator control.")
+    url = settings.ORCHESTRATOR_URL.rstrip("/") + path
+    try:
+        r = httpx.request(method, url, timeout=15)
+        if r.status_code == 404:
+            raise HTTPException(404, "not found")
+        if r.status_code == 409:
+            raise HTTPException(409, r.json().get("detail", "conflict"))
+        r.raise_for_status()
+        return r.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"Orchestrator unreachable: {exc}") from exc
+
+
+@app.post("/job/{job_id}/cancel")
+def cancel_job(job_id: str, p: Principal = Depends(require_user)):
+    row = db.get_job(job_id)
+    if not row or row["owner_user_id"] != p.clerk_id:
+        raise HTTPException(404, "not found")
+    return _proxy_to_orchestrator("POST", f"/job/{job_id}/cancel")
+
+
+@app.post("/job/{job_id}/resume")
+def resume_job(job_id: str, p: Principal = Depends(require_user)):
+    row = db.get_job(job_id)
+    if not row or row["owner_user_id"] != p.clerk_id:
+        raise HTTPException(404, "not found")
+    if row.get("status") not in ("failed", "partial", "cancelled"):
+        raise HTTPException(409, f"Job is {row.get('status')}; cannot resume")
+    return _proxy_to_orchestrator("POST", f"/job/{job_id}/resume")
 
 
 @app.get("/video/{job_id}")

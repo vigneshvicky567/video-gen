@@ -160,8 +160,14 @@ def score_image(image_path: str, query_text: str) -> float:
         score    = float(1.0 / (1.0 + np.exp(-dot)))   # sigmoid
         return score
     except Exception as exc:
-        logger.warning("SigLIP scoring failed", extra={"path": image_path, "error": str(exc)})
-        return 1.0  # pass-through on error
+        # A per-image failure means we know NOTHING about this image — score it
+        # 0.0 (reject) rather than 1.0: the old max-score pass-through let an
+        # unscoreable (often corrupt) image outrank every genuinely scored one,
+        # silently defeating the filter. Whole-model absence is still handled
+        # above as pass-through.
+        logger.warning("SigLIP scoring failed — rejecting image",
+                       extra={"path": image_path, "error": str(exc)})
+        return 0.0
 
 
 def filter_by_relevance(
@@ -195,4 +201,13 @@ def filter_by_relevance(
         "threshold": threshold,
         "top_score": round(scored[0][0], 4) if scored else 0,
     })
-    return kept if kept else [p for _, p in scored[:1]]  # always keep best even if below threshold
+    if not kept:
+        # Nothing cleared the threshold — pass the single best on to the vision
+        # vet (which sees actual pixels and can still reject it). If the vision
+        # vet is disabled the scene renders without imagery, which beats
+        # decorating it with a known-irrelevant photo.
+        logger.warning("SigLIP: no image cleared threshold; forwarding best "
+                       "candidate for vision vet to judge",
+                       extra={"best": round(scored[0][0], 4) if scored else 0})
+        return [p for s, p in scored[:1] if s > 0.0]
+    return kept

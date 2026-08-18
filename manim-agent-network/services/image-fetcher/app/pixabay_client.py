@@ -14,6 +14,8 @@ import httpx
 
 from shared.config import settings
 
+from .http_retry import get_with_backoff
+
 logger = logging.getLogger(__name__)
 
 PIXABAY_API_BASE_URL = "https://pixabay.com/api/"
@@ -56,7 +58,7 @@ async def search_pixabay(keywords: List[str]) -> Dict[str, str]:
                 "orientation": "horizontal",
             }
             try:
-                response = await client.get(PIXABAY_API_BASE_URL, params=params)
+                response = await get_with_backoff(client, PIXABAY_API_BASE_URL, params=params)
                 if response.status_code >= 400:
                     logger.warning(
                         f"Pixabay API status {response.status_code} for term '{term}': "

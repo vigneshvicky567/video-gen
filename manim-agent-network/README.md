@@ -277,7 +277,7 @@ The hard part of this project was never "call an LLM" — it was making LLM-auth
 | **Manim clip vanished before its narration finished** | The HyperFrames runtime does **not** hold a `<video>`'s last frame once playback passes the clip's intrinsic duration — it falls through to the white page background. | Compositor **freeze-pads** each clip's last frame to the narration slot (ffmpeg `tpad`); code generator now receives the scene **duration** and paces the animation to fill it. |
 | **Timed-out long jobs lost all progress** | On wall-clock timeout the orchestrator persisted the empty *initial* state, clobbering progress streamed after every graph node. | Track the latest streamed state and persist it with `status=failed`, preserving script + render paths. |
 
-A deeper write-up of two debugging sessions lives in [`docs/`](docs/) — see [`PIPELINE_FIX_REPORT_2026-06-10.md`](docs/PIPELINE_FIX_REPORT_2026-06-10.md) and [`VIDEO_QA_REPORT_f24799da.md`](docs/VIDEO_QA_REPORT_f24799da.md).
+Completed audits, fix reports, and executed plans are archived in [`docs/archive/`](docs/archive/) — including the 2026-07-05 pipeline audit (`PIPELINE_AUDIT_SPEC.md`) and its verification + implemented fix plan (`AUDIT_VERIFICATION_AND_FIX_PLAN.md`), plus the older debugging write-ups (`PIPELINE_FIX_REPORT_2026-06-10.md`, `VIDEO_QA_REPORT_f24799da.md`). Active docs (e.g. the security audit) stay in [`docs/`](docs/).
 
 ---
 

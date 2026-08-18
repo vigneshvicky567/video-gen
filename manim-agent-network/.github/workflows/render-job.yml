@@ -33,6 +33,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Fail in seconds, not after pulling 7 images: the driver script and a
+      # valid compose config are prerequisites for everything below.
+      - name: Preflight — driver script + compose config
+        run: |
+          test -f scripts/runner_neon_mirror.py
+          python -m py_compile scripts/runner_neon_mirror.py
+          docker compose -f docker-compose.yml -f docker-compose.ci.yml config -q
+
       - name: Lowercase registry
         run: echo "REGISTRY=$(echo $REGISTRY | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 

@@ -21,7 +21,7 @@ def test_health_endpoint():
     assert response.json() == {"status": "healthy", "service": "compositor"}
 
 
-@patch("services.compositor.app.main.subprocess.run")
+@patch("services.compositor.app.main.run_proc")
 @patch("services.compositor.app.main.validate_composition")
 @patch("services.compositor.app.main.compose_html")
 @patch("services.compositor.app.main.compute_scene_timings")
@@ -121,7 +121,7 @@ def test_assemble_duration_probe_failure(mock_compute_timings):
     assert "ffprobe failed" in response.json()["detail"]
 
 
-@patch("services.compositor.app.main.subprocess.run")
+@patch("services.compositor.app.main.run_proc")
 @patch("services.compositor.app.main.validate_composition")
 @patch("services.compositor.app.main.compose_html")
 @patch("services.compositor.app.main.compute_scene_timings")
@@ -185,7 +185,7 @@ def test_assemble_hyperframes_render_failure(
     assert "HyperFrames render failed" in response.json()["detail"]
 
 
-@patch("services.compositor.app.main.subprocess.run")
+@patch("services.compositor.app.main.run_proc")
 @patch("services.compositor.app.main.validate_composition")
 @patch("services.compositor.app.main.compose_html")
 @patch("services.compositor.app.main.compute_scene_timings")

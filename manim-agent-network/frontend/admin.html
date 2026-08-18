@@ -5,34 +5,191 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Admin · Manim Agent Network</title>
   <link rel="icon" type="image/png" href="assets/favicon.png" />
-  <style>
-    :root { color-scheme: dark; }
-    * { box-sizing: border-box; }
-    body { margin: 0; background: #0b0f17; color: #e2e8f0;
-           font: 14px/1.5 ui-sans-serif, system-ui, sans-serif; }
-    main { max-width: 1100px; margin: 0 auto; padding: 24px; }
-    h1 { font-size: 20px; margin: 0 0 4px; }
-    .muted { color: #94a3b8; }
-    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-             gap: 12px; margin: 18px 0; }
-    .card { background: #131a26; border: 1px solid #1f2a3a; border-radius: 10px; padding: 14px; }
-    .card .n { font-size: 24px; font-weight: 700; }
-    .card .l { color: #94a3b8; font-size: 12px; }
-    .bar { height: 8px; background: #1f2a3a; border-radius: 6px; overflow: hidden; margin-top: 8px; }
-    .bar > i { display: block; height: 100%; background: linear-gradient(90deg,#22d3ee,#34d399); }
-    table { width: 100%; border-collapse: collapse; margin: 10px 0 26px; }
-    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #1f2a3a; font-size: 13px; }
-    th { color: #94a3b8; font-weight: 600; }
-    .pill { padding: 1px 8px; border-radius: 999px; font-size: 11px; background: #1f2a3a; }
-    .pill.done { background: #14532d; } .pill.failed { background: #4c1d24; }
-    .pill.running, .pill.queued { background: #1e3a5f; }
-    .wrap { overflow-x: auto; }
-    .warn { color: #f59e0b; }
-  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/admin.css?v=ls4" />
 </head>
 <body>
-  <main id="app"><p class="muted">Loading…</p></main>
-  <script src="js/clerk-auth.js?v=clerk1"></script>
-  <script src="js/admin.js?v=admin1"></script>
+  <div class="layout" id="layout">
+    <!-- ── Sidebar ─────────────────────────────────────────── -->
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <span class="brand-mark">◐</span>
+        <span class="brand-name">Manim<span class="brand-dim">·net</span></span>
+        <button class="icon-btn collapse-btn" id="collapseBtn" title="Collapse sidebar (\\)">⟨</button>
+      </div>
+
+      <div class="nav-group-label">Console</div>
+      <nav class="nav" id="nav">
+        <button class="nav-item is-active" data-view="jobs" title="Jobs">
+          <span class="nav-ico">▤</span><span class="nav-txt">Jobs</span>
+          <span class="nav-count" id="navJobsCount">—</span>
+        </button>
+        <button class="nav-item" data-view="analytics" title="Analytics">
+          <span class="nav-ico">◳</span><span class="nav-txt">Analytics</span>
+        </button>
+        <button class="nav-item" data-view="services" title="Services">
+          <span class="nav-ico">⊞</span><span class="nav-txt">Services</span>
+          <span class="nav-dot" id="navHealthDot"></span>
+        </button>
+      </nav>
+
+      <div class="nav-group-label">Shortcuts</div>
+      <nav class="nav">
+        <button class="nav-item" id="paletteOpen" title="Command palette">
+          <span class="nav-ico">⌕</span><span class="nav-txt">Search</span>
+          <span class="kbd-hint">Ctrl K</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="refresh-row">
+          <label class="switch">
+            <input type="checkbox" id="autoToggle" checked />
+            <span class="switch-track"></span>
+          </label>
+          <span class="refresh-label nav-txt">Auto-refresh <span class="mono">10s</span></span>
+        </div>
+        <div class="updated nav-txt" id="lastUpdated">—</div>
+        <div class="env-line nav-txt"><span class="mono" id="envLine">orchestrator · local</span></div>
+      </div>
+    </aside>
+
+    <!-- ── Main ────────────────────────────────────────────── -->
+    <main class="main">
+      <header class="topbar">
+        <div class="crumb">
+          <button class="icon-btn show-side" id="showSide" title="Menu">☰</button>
+          <span class="crumb-dim">Admin</span>
+          <span class="crumb-sep">/</span>
+          <span id="crumbView">Jobs</span>
+        </div>
+        <div class="title-row">
+          <h1 id="viewTitle">Jobs</h1>
+          <div class="title-actions">
+            <select class="select" id="timeRange" title="Time range">
+              <option value="0" selected>All time</option>
+              <option value="1">Last 1 hour</option>
+              <option value="24">Last 24 hours</option>
+              <option value="168">Last 7 days</option>
+            </select>
+            <button class="btn-soft" id="refreshBtn" title="Refresh now">⟳ Refresh</button>
+          </div>
+        </div>
+      </header>
+
+      <div class="toolbar" id="toolbar">
+        <div class="chips" id="statusChips">
+          <button class="chip is-active" data-f="all">All</button>
+          <button class="chip" data-f="active">Active</button>
+          <button class="chip" data-f="completed">Completed</button>
+          <button class="chip" data-f="partial">Partial</button>
+          <button class="chip" data-f="failed">Failed</button>
+          <button class="chip" data-f="cancelled">Cancelled</button>
+        </div>
+        <div class="search">
+          <span class="search-ico">⌕</span>
+          <input id="search" type="text" placeholder="Search topic or job id…" autocomplete="off" />
+        </div>
+      </div>
+
+      <!-- Bulk action bar (shown on selection) -->
+      <div class="bulkbar" id="bulkbar" hidden>
+        <span class="bulk-count"><span id="bulkN">0</span> selected</span>
+        <button class="btn-soft" id="bulkCancel">■ Cancel active</button>
+        <button class="btn-soft" id="bulkResume">↻ Resume failed</button>
+        <button class="btn-soft danger" id="bulkDelete">🗑 Delete</button>
+        <button class="btn-soft" id="bulkClear">Clear</button>
+      </div>
+
+      <!-- Stat strip -->
+      <section class="stats" id="stats"></section>
+
+      <!-- Jobs view -->
+      <section class="view view-jobs" id="view-jobs">
+        <div class="table-wrap">
+          <table class="data" id="jobsTable">
+            <thead>
+              <tr>
+                <th class="c-check"><input type="checkbox" id="selectAll" /></th>
+                <th class="c-stat"></th>
+                <th class="c-name sortable" data-sort="topic">Topic</th>
+                <th class="c-id">Job ID</th>
+                <th class="c-stage sortable" data-sort="status">Stage</th>
+                <th class="c-time sortable" data-sort="created_at">Created</th>
+                <th class="c-dur sortable" data-sort="duration">Duration</th>
+              </tr>
+            </thead>
+            <tbody id="jobsBody">
+              <tr><td colspan="7" class="t-loading">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="health-strip" id="healthStrip"></div>
+      </section>
+
+      <!-- Analytics view -->
+      <section class="view view-analytics" id="view-analytics" hidden>
+        <div id="analyticsBody" class="analytics-body"></div>
+      </section>
+
+      <!-- Services view -->
+      <section class="view view-services" id="view-services" hidden>
+        <div id="servicesBody" class="services-body"></div>
+      </section>
+    </main>
+
+    <!-- ── Detail drawer ───────────────────────────────────── -->
+    <aside class="drawer" id="drawer" hidden aria-hidden="true">
+      <div class="drawer-head">
+        <div class="drawer-nav">
+          <button class="icon-btn" id="prevJob" title="Previous (↑ / k)">↑</button>
+          <button class="icon-btn" id="nextJob" title="Next (↓ / j)">↓</button>
+        </div>
+        <div class="drawer-title">
+          <span class="d-stat" id="dStat"></span>
+          <span class="d-topic" id="dTopic">—</span>
+        </div>
+        <div class="drawer-head-actions">
+          <button class="icon-btn" id="dCopyId" title="Copy job id">⧉</button>
+          <button class="icon-btn" id="drawerClose" title="Close (Esc)">✕</button>
+        </div>
+      </div>
+      <div class="drawer-sub">
+        <span class="mono d-id" id="dId">—</span>
+      </div>
+
+      <!-- per-job actions -->
+      <div class="drawer-actions" id="drawerActions"></div>
+
+      <div class="drawer-tabs" id="drawerTabs">
+        <button class="d-tab is-active" data-tab="waterfall">Waterfall</button>
+        <button class="d-tab" data-tab="overview">Overview</button>
+        <button class="d-tab" data-tab="input">Input</button>
+        <button class="d-tab" data-tab="output">Output</button>
+        <button class="d-tab" data-tab="scenes">Scenes</button>
+        <button class="d-tab" data-tab="error">Error</button>
+        <button class="d-tab" data-tab="raw">Raw</button>
+      </div>
+      <div class="drawer-body" id="drawerBody"></div>
+    </aside>
+    <div class="scrim" id="scrim" hidden></div>
+
+    <!-- ── Command palette ─────────────────────────────────── -->
+    <div class="palette-wrap" id="paletteWrap" hidden>
+      <div class="palette">
+        <input id="paletteInput" type="text" placeholder="Jump to a job by topic or id…" autocomplete="off" />
+        <div class="palette-list" id="paletteList"></div>
+        <div class="palette-foot"><span class="kbd">↑↓</span> navigate <span class="kbd">↵</span> open <span class="kbd">esc</span> close</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Auth bypassed for now — uncomment to re-enable Clerk gating -->
+  <!-- <script src="js/clerk-auth.js?v=clerk1"></script> -->
+  <script>window.API_BASE = (location.port === "8010" || location.port === "8090") ? "" : "http://localhost:8010";</script>
+  <script src="js/admin.js?v=ls4"></script>
 </body>
 </html>

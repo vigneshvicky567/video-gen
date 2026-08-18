@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     DEFAULT_TARGET_DURATION_S: int = 120   # used when a request omits a duration
     VARIANT_B_THRESHOLD_S: int = 540       # M1 single-runner ceiling; longer needs Variant B (deferred) -> rejected
 
+    # --- Orchestrator (direct, for Docker/local setups where it's a long-running service).
+    #     Leave empty when orchestrator is ephemeral (GitHub Actions runners). ---
+    ORCHESTRATOR_URL: str = ""             # e.g. "http://orchestrator:8000" in Docker Compose
+
     # --- Frontend ---
     FRONTEND_DIR: str = "/frontend"        # served same-origin (no CORS)
 

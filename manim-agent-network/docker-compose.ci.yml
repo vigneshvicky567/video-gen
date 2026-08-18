@@ -24,13 +24,21 @@ services:
     environment:
       - VALIDATOR_MAX_CONCURRENT_RENDERS=1
       - JOB_TIMEOUT_MAX_SECONDS=20000
+    # Long form (matches the base file — compose can't merge short+long forms).
+    # image-fetcher is intentionally absent: disabled on the runner via profiles.
     depends_on:
-      - base
-      - script-writer
-      - code-generator
-      - validator
-      - voiceover
-      - compositor
+      base:
+        condition: service_started
+      script-writer:
+        condition: service_healthy
+      code-generator:
+        condition: service_healthy
+      validator:
+        condition: service_healthy
+      voiceover:
+        condition: service_healthy
+      compositor:
+        condition: service_healthy
 
   script-writer:
     image: ${REGISTRY}/script-writer:${IMAGE_TAG:-latest}
@@ -40,20 +48,23 @@ services:
     image: ${REGISTRY}/code-generator:${IMAGE_TAG:-latest}
     mem_limit: 512m
 
+  # Mem budget: 512*3 + 2560 + 768 + 1280 = 6144 MB on a 7 GB runner —
+  # ~1.9 GB headroom for kernel/runner/agent (the old budget summed to exactly
+  # 7168 MB, guaranteeing OOM pressure).
   validator:
     image: ${REGISTRY}/validator:${IMAGE_TAG:-latest}
-    mem_limit: 3g
+    mem_limit: 2560m
     environment:
       - VALIDATOR_MAX_CONCURRENT_RENDERS=1
 
   voiceover:
     image: ${REGISTRY}/voiceover:${IMAGE_TAG:-latest}
-    mem_limit: 1g
+    mem_limit: 768m
     deploy: {}            # drop the base file's GPU reservation (no GPU on runner)
 
   compositor:
     image: ${REGISTRY}/compositor:${IMAGE_TAG:-latest}
-    mem_limit: 1536m
+    mem_limit: 1280m
 
   # image-fetcher disabled on the runner (degradable). `profiles` keeps it out of
   # the default `up`. Re-enable by swapping its wheel to CPU onnxruntime (+~800MB).

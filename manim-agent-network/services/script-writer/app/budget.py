@@ -36,11 +36,21 @@ def audit(scenes: List[Dict[str, Any]], target_s: int,
           tol: float = settings.SCRIPT_DURATION_TOLERANCE) -> Dict[str, Any]:
     total = sum(scene_slot_seconds(s) for s in scenes)
     dev = (total - target_s) / target_s if target_s else 0.0
+    # Coverage: how much of the assembled runtime actually carries narration.
+    # Slots can hit the target while narration lags far behind (the model
+    # inflates estimated_duration_seconds); every uncovered second is dead air
+    # in the final video, so low coverage must fail the audit even when the
+    # total slot time is within tolerance.
+    narration_total = sum(narration_seconds(s.get("narration_text", "")) for s in scenes)
+    coverage = (narration_total / total) if total else 0.0
     return {
         "target_seconds": target_s,
         "estimated_seconds": round(total, 1),
+        "narration_seconds": round(narration_total, 1),
+        "narration_coverage": round(coverage, 2),
         "deviation_pct": round(dev * 100, 1),
-        "within_tolerance": abs(dev) <= tol,
+        "within_tolerance": abs(dev) <= tol
+        and coverage >= settings.SCRIPT_MIN_NARRATION_COVERAGE,
         "per_scene": [
             {
                 "scene_id": s.get("scene_id"),
@@ -56,6 +66,11 @@ def audit(scenes: List[Dict[str, Any]], target_s: int,
 def repair_budgets(scenes: List[Dict[str, Any]], target_s: int) -> List[Dict[str, Any]]:
     """Per-scene corrected budgets for the repair prompt — scale every scene by
     target/total so their proportions are preserved.
+
+    ONE currency only: target_words. The repair prompt rewrites narration to hit
+    target_words and derives estimated_duration_seconds = round(words / WPS), so
+    duration and word count can't contradict each other. (An 8-word / 4s floor
+    keeps every scene above the compositor's minimum slot.)
     """
     total = sum(scene_slot_seconds(s) for s in scenes) or 1.0
     scale = target_s / total
@@ -64,8 +79,7 @@ def repair_budgets(scenes: List[Dict[str, Any]], target_s: int) -> List[Dict[str
         new_slot = max(4.0, scene_slot_seconds(s) * scale)  # 4s floor per scene
         out.append({
             "scene_id": s.get("scene_id"),
-            "duration_budget_s": int(round(new_slot)),
-            "word_budget": max(8, int(round(new_slot * WPS))),
+            "target_words": max(8, int(round(new_slot * WPS))),
         })
     return out
 

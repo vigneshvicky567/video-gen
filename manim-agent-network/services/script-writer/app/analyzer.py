@@ -23,44 +23,80 @@ logger = get_logger(__name__)
 
 # Hard bounds — never trust LLM numbers.
 _MIN_RECOMMENDED = 120
+# Study-material scope needs room: a course/tutorial clamped to the 120s generic
+# floor would still route to the heavy full-council path and come out thin and
+# over-sectioned. Give it a matching minimum recommended length.
+_STUDY_MIN_RECOMMENDED = 600
 _MAX_RECOMMENDED = 1800
 _MAX_DURATION_CEILING = 2400  # matches GenerationBrief target_duration_seconds le=2400
 
+# An "AI decides" choice is prepended to every single-select, non-duration
+# question so it is the DEFAULT and the creator can defer the fork to the model
+# instead of being forced to pick. The frontend maps a selection of this exact
+# label to "no answer" (omitted from the brief), so the writer decides freely.
+AI_DECIDE_LABEL = "Decide for me"
+
+
+def _inject_ai_decide(questions: "List[AnalyzeQuestion]") -> "List[AnalyzeQuestion]":
+    """Prepend an 'AI decides' option to each single-select, non-duration
+    question. Multi-select questions already mean 'AI decides' when left empty,
+    so they're untouched. Idempotent — skips a question that already has it."""
+    out: List[AnalyzeQuestion] = []
+    for q in questions:
+        if q.id == "duration" or q.multi_select or not q.options:
+            out.append(q)
+            continue
+        if any(o.label.strip().lower() == AI_DECIDE_LABEL.lower() for o in q.options):
+            out.append(q)
+            continue
+        ai = QuestionOption(label=AI_DECIDE_LABEL, description="let the model pick what fits this topic")
+        out.append(q.model_copy(update={"options": [ai] + list(q.options)}))
+    return out
+
 
 def build_analyze_prompt(topic: str) -> str:
-    return f"""You are a senior video producer running intake for ONE specific video. Design a short, SHARP questionnaire: every question's answer must change how THIS video gets made. Be terse — short strings, no padding.
+    return f"""You are a senior video producer running intake for ONE specific explainer video. Design a SHORT, SHARP questionnaire: every question must resolve a real fork that changes how THIS video gets made. Terse strings, no padding.
 
-Topic: **{topic}**
+Topic (this may be a long, messy, or pasted brief — read it, don't echo it):
+\"\"\"{topic}\"\"\"
 
-First decide what is genuinely UNDECIDED about this topic. A great question resolves a real fork that sends the script in a different direction. A dumb question asks what a sensible default already answers, or what the topic text already tells you.
+STEP 1 — TITLE. Write `title`: a clean, plain-English title of what was actually asked, <= 90 characters, at most two short lines. If the topic is a long or rambling brief, ABSTRACT it down to the core subject — never copy the raw text, never include instructions, code, or timestamps. Example: a 600-word brief about a goalkeeper's World Cup heroics -> "Vozinha's World Cup Shutout vs Spain".
 
-Every non-duration question MUST pass all three tests:
+STEP 2 — QUESTIONS. Decide what is genuinely UNDECIDED. A great question resolves a fork that sends the script in a visibly different direction. A dumb question asks what a sensible default already settles, or what the topic already states.
+
+Every non-duration question MUST pass ALL THREE tests:
 1. Decision-changing — two different answers yield visibly different scripts.
 2. Not inferable — the topic text doesn't already imply the answer.
 3. One-tap — 2-4 concrete options a non-expert picks instantly.
 
-Choose the forks that actually matter for THIS topic. Good axes to draw from (pick what fits — never ask all):
+Pick only the forks that matter for THIS topic (never ask all). Good axes:
 - Angle / framing (history vs how-it-works vs why-it-matters)
-- Depth-vs-breadth tradeoff
+- Depth vs breadth
 - Concrete-examples-first vs theory-first
 - What to deliberately EXCLUDE / assumed prior knowledge
 - Which sub-system or case study to center on
-- Tone (rigorous vs playful) when the topic genuinely supports both
+- Tone (rigorous vs playful) — only when the topic truly supports both
+
+OPTION QUALITY:
+- Each option is a distinct DIRECTION, not a synonym of another. If two options would yield the same script, cut one.
+- Labels 1-4 words, concrete and self-explanatory. Descriptions: empty string "".
+- NEVER add a "no preference", "either", "doesn't matter", "decide for me", or "let the AI decide" option — the system appends that automatically. Adding your own is a duplicate.
 
 ANTI-PATTERNS — never ask as rote filler:
-- "Who is the audience?" UNLESS the topic truly splits (skip if topic already says "for beginners", "ELI5", "for experts", etc.).
+- "Who is the audience?" UNLESS the topic genuinely splits (skip if it says "for beginners", "ELI5", "for experts", etc.).
 - Generic "what to focus on?" with vague options.
 - Anything the recommended default already answers.
 - Two questions resolving the same fork.
 
 GOOD vs DUMB (topic "How RSA encryption works"):
 - DUMB: "Who is this for? [Beginner / Advanced]"  ← topic implies a curious general audience.
-- GREAT: "Show the math or keep it intuitive? [Walk the modular arithmetic / Intuition + analogies only / Light math, mostly intuition]"  ← genuinely changes every scene.
+- GREAT: "Show the math or keep it intuitive? [Walk the modular arithmetic / Intuition + analogies only / Light math, mostly intuition]"  ← changes every scene.
 
-Reserved ids — use these EXACT ids when (and only when) that axis is the real fork, so answers map cleanly: "audience" (audience level), "focus" (multi-select sub-areas), "style" (visual style), "pacing". For any other axis, invent a short snake_case id (e.g. "math_depth", "angle").
+Reserved ids — use these EXACT ids ONLY when that axis is the real fork, so answers map cleanly: "audience" (audience level), "focus" (multi-select sub-areas), "style" (visual style), "pacing". For any other axis, invent a short snake_case id (e.g. "math_depth", "angle").
 
 Return ONLY valid JSON, exactly this shape:
 {{
+  "title": "Clean <=90-char plain-English title of what was asked.",
   "feasibility_summary": "ONE sentence stating the sensible scope WITH a min-max minute range and a recommendation.",
   "recommended_duration_seconds": 300,
   "max_duration_seconds": 1200,
@@ -73,10 +109,10 @@ Return ONLY valid JSON, exactly this shape:
   ]
 }}
 
-Rules (keep it tight):
+Rules (tight):
 - duration question FIRST, always (id "duration"). 3-4 questions total INCLUDING duration — design the other 2-3 for this topic.
-- Option labels: 1-4 words, concrete. Descriptions: empty string "" (omit prose).
-- is_study_material = true only for skill-learning courses ("learn X", "master Y"); false for single concepts.
+- Option labels 1-4 words; descriptions empty "".
+- is_study_material = true ONLY for skill-learning courses ("learn X", "master Y"); false for single concepts.
 - study material -> recommend 600-1500s; single concept -> 180-420s. max >= recommended.
 - duration_presets: 3-4 ascending seconds, all <= max.
 """
@@ -153,10 +189,29 @@ def _clean_summary(text: str, max_chars: int = 240) -> str:
     return out
 
 
+def _make_title(raw_title: Any, topic: str, max_chars: int = 90) -> str:
+    """Clean the LLM-supplied title; fall back to an abstract of the topic.
+    Never echoes a long raw prompt verbatim — caps at max_chars on a word
+    boundary so a giant pasted brief becomes a short, displayable title."""
+    t = " ".join(str(raw_title or "").split())
+    if not t:                        # no/blank LLM title -> abstract from topic
+        collapsed = " ".join((topic or "").split())
+        first = re.split(r"(?<=[.!?])\s+", collapsed)[0] if collapsed else ""
+        t = first or collapsed
+    if len(t) > max_chars:
+        t = t[:max_chars].rsplit(" ", 1)[0].rstrip(" ,;:-") + "…"
+    return t or "Untitled"
+
+
 def normalize_analysis(raw: Dict[str, Any], topic: str) -> TopicAnalysis:
     """Apply programmatic clamps and structural guarantees to LLM output."""
+    is_study = bool(raw.get("is_study_material", False))
+    # Study material routes to the heavy full-council path (over-sectioned, thin
+    # scenes) if it lands at the generic 120s floor. Raise the recommended/min
+    # floor so the budget matches study-material scope.
+    rec_floor = _STUDY_MIN_RECOMMENDED if is_study else _MIN_RECOMMENDED
     recommended = _clamp(
-        raw.get("recommended_duration_seconds"), _MIN_RECOMMENDED, _MAX_RECOMMENDED, 300
+        raw.get("recommended_duration_seconds"), rec_floor, _MAX_RECOMMENDED, max(rec_floor, 300)
     )
     max_dur = _clamp(
         raw.get("max_duration_seconds"), recommended, _MAX_DURATION_CEILING, max(recommended, 1200)
@@ -205,14 +260,15 @@ def normalize_analysis(raw: Dict[str, Any], topic: str) -> TopicAnalysis:
 
     return TopicAnalysis(
         topic=topic,
+        title=_make_title(raw.get("title"), topic),
         feasibility_summary=_clean_summary(raw.get("feasibility_summary"))
         or f"This topic sensibly supports a {presets[0] // 60}-{max_dur // 60} minute video.",
         recommended_duration_seconds=recommended,
         max_duration_seconds=max_dur,
         duration_presets=presets,
-        is_study_material=bool(raw.get("is_study_material", False)),
+        is_study_material=is_study,
         topic_classification=str(raw.get("topic_classification") or "concept-explainer")[:40],
-        questions=questions,
+        questions=_inject_ai_decide(questions),
         degraded=False,
     )
 
@@ -253,6 +309,7 @@ def default_analysis(topic: str) -> TopicAnalysis:
     presets = [180, 300, 600, 900]
     return TopicAnalysis(
         topic=topic,
+        title=_make_title(None, topic),
         feasibility_summary=(
             "This topic sensibly supports a 3-20 minute video; about 5 minutes is a "
             "solid default. (Automatic analysis was unavailable — pick what fits.)"
@@ -262,7 +319,7 @@ def default_analysis(topic: str) -> TopicAnalysis:
         duration_presets=presets,
         is_study_material=False,
         topic_classification="concept-explainer",
-        questions=_default_questions(recommended, max_dur, presets),
+        questions=_inject_ai_decide(_default_questions(recommended, max_dur, presets)),
         degraded=True,
     )
 

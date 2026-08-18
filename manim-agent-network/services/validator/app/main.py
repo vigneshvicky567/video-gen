@@ -1,8 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from shared.schemas.requests import ValidatorRequest
 from shared.schemas.responses import ValidatorResponse
 from shared.config import settings
 from shared.log import get_logger, set_log_context, timed_block, log_subprocess, log_file, make_request_logging_middleware
+from shared.proc import run_proc, ProcTimeout
+from shared.security import FORBIDDEN_MODULES as _FORBIDDEN_MODULES, FORBIDDEN_BUILTINS as _FORBIDDEN_BUILTINS
 from langsmith import traceable
 import asyncio
 import subprocess
@@ -12,6 +14,7 @@ import sys
 import glob
 import ast
 import base64
+import signal
 
 app = FastAPI(title="Validator Service")
 app.add_middleware(make_request_logging_middleware("validator"))
@@ -21,33 +24,115 @@ logger = get_logger(__name__)
 _RENDER_SEMAPHORE: asyncio.Semaphore = None  # type: ignore[assignment]
 
 
-def _run_manim_subprocess(cmd: list, timeout_s: int):
-    """Run manim in a blocking thread; kill the child process on timeout.
+# Env vars carried into the manim subprocess. Manim runs GENERATED code, so it
+# must NOT inherit this service's env (which holds every API key + internal
+# service URL). We rebuild a minimal, safe env from os.environ selectively:
+# only PATH/HOME (for finding manim/latex/ffmpeg + their caches) plus the
+# standard locale/tmp/latex/python knobs manim actually needs. Anything not on
+# this allowlist — API keys, ASSEMBLER_URL, ORCHESTRATOR_URL, etc. — is dropped.
+_MANIM_ENV_ALLOWLIST = (
+    "PATH", "HOME", "PYTHONPATH", "PYTHONHASHSEED", "PYTHONUNBUFFERED",
+    "LANG", "LC_ALL", "LC_CTYPE", "TERM",
+    "TMPDIR", "TEMP", "TMP",
+    "TEXINPUTS", "TEXMFHOME", "TEXMFVAR", "TEXMFCONFIG", "TEXMFCACHE",
+    "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+    "SYSTEMROOT",  # Windows dev host: python/ffmpeg need this to start
+)
 
-    Returns (returncode, stdout, stderr). Raises subprocess.TimeoutExpired
-    after killing the child so the caller can distinguish timeout from error.
+
+def _build_manim_env() -> dict:
+    """Minimal, safe env for the manim subprocess — no API keys / service URLs."""
+    env = {k: os.environ[k] for k in _MANIM_ENV_ALLOWLIST if k in os.environ}
+    # PATH is mandatory for locating the manim/latex/ffmpeg binaries.
+    env.setdefault("PATH", os.defpath)
+    return env
+
+
+def _run_manim_subprocess(cmd: list, timeout_s: int):
+    """Run manim in a blocking thread; kill the whole process GROUP on timeout.
+
+    manim spawns grandchildren (dvisvgm, ffmpeg) that a bare proc.kill() leaks
+    as zombies still holding CPU/RAM. We start the child in its own process
+    group (preexec_fn=os.setsid, POSIX — the service runs in Linux containers)
+    and SIGKILL the whole group on timeout OR on any other exception, then
+    drain/wait so nothing is left leaking. The subprocess also runs with a
+    stripped env (see _build_manim_env) so generated code never sees our
+    secrets. Returns (returncode, stdout, stderr). Raises ProcTimeout — a
+    subprocess.TimeoutExpired subclass — so callers' except clauses still match.
     """
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    popen_kwargs = dict(stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        text=True, env=_build_manim_env())
+    # POSIX: own session/process group so os.killpg reaches the whole tree.
+    # preexec_fn is POSIX-only; on the win32 dev host fall back to a new group.
+    if hasattr(os, "setsid"):
+        popen_kwargs["preexec_fn"] = os.setsid
+    else:
+        popen_kwargs["creationflags"] = getattr(
+            subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+
+    proc = subprocess.Popen(cmd, **popen_kwargs)
+
+    def _kill_group() -> None:
+        try:
+            if hasattr(os, "killpg"):
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            else:
+                proc.kill()
+        except (ProcessLookupError, PermissionError, OSError):
+            proc.kill()
+
     try:
         stdout, stderr = proc.communicate(timeout=timeout_s)
-        return proc.returncode, stdout, stderr
     except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
+        _kill_group()
+        try:
+            stdout, stderr = proc.communicate(timeout=10)  # drain/reap
+        except Exception:
+            stdout, stderr = "", ""
+        raise ProcTimeout(cmd, timeout_s, output=stdout, stderr=stderr)
+    except BaseException:
+        # ANY other failure (cancellation, OSError, KeyboardInterrupt) must not
+        # leak the process group — kill and reap before propagating.
+        _kill_group()
+        try:
+            proc.communicate(timeout=10)
+        except Exception:
+            pass
         raise
+
+    return proc.returncode, stdout, stderr
 
 # Render budget bounds.
 _TIMEOUT_FLOOR_S = 90
 _TIMEOUT_PER_PLAY_S = 20
 _TIMEOUT_CEILING_S = 600
 
-# Self-test source. MUST be flagged by AST preflight; otherwise image is stale.
+# Self-test sources. Each MUST be flagged by AST preflight; otherwise image is
+# stale. Covers BOTH the deprecated-API branch and the SECURITY branch of the
+# gate (a security regression used to be invisible to the self-test).
 _SELF_TEST_BAD_SOURCE = (
     "from manim import *\n"
     "config.background = WHITE\n"
     "class S(ThreeDScene):\n"
     "    def construct(self):\n"
     "        self.play(ShowCreation(Circle()), self.camera.animate.set_phi(0))\n"
+)
+_SELF_TEST_MALICIOUS_SOURCE = (
+    "from manim import *\n"
+    "import os\n"
+    "class S(Scene):\n"
+    "    def construct(self):\n"
+    "        eval('1+1')\n"
+    "        getattr(__builtins__, 'ex' + 'ec')\n"
+)
+# Each of these MUST be rejected by the security branch on its own — a single
+# combined blob could pass on ONE finding while the rest silently regressed.
+_SELF_TEST_SECURITY_SOURCES = (
+    "import os\n",
+    "import subprocess\nsubprocess.run(['id'])\n",
+    "eval('1+1')\n",
+    "__import__('os')\n",
+    "x = ().__class__.__bases__\n",
 )
 
 
@@ -71,7 +156,7 @@ def _reencode_for_seek(path: str, scene_id: int) -> str:
         out_path,
     ]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = run_proc(cmd, timeout=300)
         if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
             logger.info("Re-encoded render for seekability",
                         extra={"scene_id": scene_id, "path": out_path})
@@ -100,11 +185,15 @@ def _compute_timeout(source: str) -> int:
         tree = ast.parse(source)
     except SyntaxError:
         return _TIMEOUT_FLOOR_S
+    # Count only self.play(...) — a stray `sound.play()` or similar on another
+    # object must not inflate the render budget.
     plays = sum(
         1 for n in ast.walk(tree)
         if isinstance(n, ast.Call)
         and isinstance(n.func, ast.Attribute)
         and n.func.attr == "play"
+        and isinstance(n.func.value, ast.Name)
+        and n.func.value.id == "self"
     )
     return min(_TIMEOUT_CEILING_S, max(_TIMEOUT_FLOOR_S,
               _TIMEOUT_FLOOR_S + _TIMEOUT_PER_PLAY_S * plays))
@@ -194,24 +283,46 @@ _VISION_FRAME_TIMES = (0.25, 0.50, 0.75)  # fraction of duration to sample
 _VISION_MAX_IMG_BYTES = 4 * 1024 * 1024
 
 
+def _video_duration(path: str) -> float | None:
+    """Container duration in seconds via ffprobe; None when unprobeable."""
+    try:
+        r = run_proc(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            timeout=30,
+        )
+        return float(r.stdout.strip())
+    except (ProcTimeout, ValueError, AttributeError):
+        return None
+
+
+# Overshoot tolerance: renders may exceed the narration slot by 20% + 2s before
+# they're rejected — beyond that the film shows silent, static video (dead air)
+# for the difference, and manim beats drift off the narration entirely.
+_DURATION_OVERSHOOT_RATIO = 1.20
+_DURATION_OVERSHOOT_SLACK_S = 2.0
+
+
 def _extract_frame(video_path: str, frac: float, out_path: str) -> bool:
     """Extract one frame at `frac` of video duration into out_path via ffmpeg."""
-    # Get duration first
-    probe = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1", video_path],
-        capture_output=True, text=True, timeout=30,
-    )
     try:
+        probe = run_proc(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+            timeout=30,
+        )
         duration = float(probe.stdout.strip())
-    except (ValueError, AttributeError):
+    except (ProcTimeout, ValueError, AttributeError):
         return False
     seek_s = max(0.1, duration * frac)
-    result = subprocess.run(
-        ["ffmpeg", "-y", "-ss", str(seek_s), "-i", video_path,
-         "-vframes", "1", "-q:v", "2", out_path],
-        capture_output=True, text=True, timeout=30,
-    )
+    try:
+        result = run_proc(
+            ["ffmpeg", "-y", "-ss", str(seek_s), "-i", video_path,
+             "-vframes", "1", "-q:v", "2", out_path],
+            timeout=30,
+        )
+    except ProcTimeout:
+        return False
     return result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0
 
 
@@ -227,10 +338,66 @@ def _data_url_for_frame(path: str) -> str | None:
         return None
 
 
-async def _vision_inspect_manim(render_path: str, scene_id: int) -> tuple:
-    """Sample 3 keyframes from a Manim render and ask the vision model if they look broken.
+async def _vision_quality_rubric(vision_client, data_url: str, scene_id: int,
+                                 narration: str, visual_desc: str) -> tuple:
+    """Score one rendered frame against the scene's INTENT (the quality gate).
 
-    Returns (ok: bool, error_message: str). Fail-open on any error.
+    The binary broken/empty check certifies renderability; this rubric is the
+    content-quality feedback loop: a scene that renders fine but teaches
+    nothing, mismatches its narration, or is illegible gets a concrete critique
+    that flows back into the code-gen retry prompt. Returns (ok, critique).
+    """
+    from shared.llm_client import extract_json
+    prompt = (
+        "You are reviewing one frame of an educational animation scene.\n"
+        f"The narration for this scene says: \"{(narration or '')[:600]}\"\n"
+        f"The intended visual: \"{(visual_desc or '')[:400]}\"\n\n"
+        "Score 1-5 (5 = excellent):\n"
+        "- match_narration: does what's on screen SHOW what the narration talks about?\n"
+        "- legibility: clear focal point, readable sizes, sane contrast, not cluttered?\n"
+        "- adds_insight: does the visual add understanding beyond the words (a real\n"
+        "  diagram/graph/relationship), or is it decorative filler?\n"
+        "Then name the single worst problem in one sentence (or \"none\").\n\n"
+        'Reply with ONLY JSON: {"match_narration": N, "legibility": N, '
+        '"adds_insight": N, "worst_problem": "..."}'
+    )
+    resp = await vision_client.chat.completions.acreate(
+        model=settings.IMAGE_EVAL_MODEL,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": data_url}},
+                {"type": "text", "text": prompt},
+            ],
+        }],
+        max_tokens=200,
+        temperature=0.0,
+    )
+    import json as _json
+    data = _json.loads(extract_json(resp.choices[0].message.content or ""))
+    scores = {k: int(data.get(k, 3)) for k in ("match_narration", "legibility", "adds_insight")}
+    worst = str(data.get("worst_problem") or "").strip()
+    logger.info("Vision quality rubric", extra={"scene_id": scene_id, **scores,
+                                                "worst_problem": worst[:160]})
+    if min(scores.values()) < 3:
+        failing = ", ".join(f"{k}={v}" for k, v in scores.items() if v < 3)
+        return False, (
+            f"quality: rendered scene scored low on {failing} (1-5 scale). "
+            f"Reviewer's worst problem: {worst or 'unspecified'}. "
+            "Regenerate so the visual directly SHOWS what the narration explains, "
+            "with one clear focal point and readable sizes."
+        )
+    return True, ""
+
+
+async def _vision_inspect_manim(render_path: str, scene_id: int,
+                                narration: str | None = None,
+                                visual_desc: str | None = None) -> tuple:
+    """Sample keyframes from a Manim render: (1) binary broken/empty check across
+    3 frames, (2) when narration is provided, a quality RUBRIC on the midpoint
+    frame (matches-narration / legibility / adds-insight — the content-quality
+    feedback loop). Returns (ok: bool, error_message: str). Fail-open on gate
+    outage, with a loud gate_skipped log.
     """
     if not settings.VISION_INSPECT_ENABLED:
         return True, ""
@@ -239,6 +406,7 @@ async def _vision_inspect_manim(render_path: str, scene_id: int) -> tuple:
 
     import tempfile
     verdicts = []
+    mid_frame_url = None
 
     try:
         from shared.llm_client import get_llm_client
@@ -257,6 +425,8 @@ async def _vision_inspect_manim(render_path: str, scene_id: int) -> tuple:
                 data_url = _data_url_for_frame(frame_path)
                 if not data_url:
                     continue
+                if frac == 0.50:
+                    mid_frame_url = data_url
                 resp = await vision_client.chat.completions.acreate(
                     model=settings.IMAGE_EVAL_MODEL,
                     messages=[{
@@ -287,22 +457,71 @@ async def _vision_inspect_manim(render_path: str, scene_id: int) -> tuple:
                 })
 
     if not verdicts:
-        return True, ""  # couldn't sample → fail-open
+        # We reached the sampling loop (client + model configured, gate ENABLED)
+        # yet not one frame yielded a verdict — frame extraction or every vision
+        # call failed. This is NOT "tooling unavailable" (that soft-skips
+        # earlier with a client-missing log); the gate was asked to run and
+        # could not. Fail CLOSED so a broken render can't slip through on a QA
+        # outage, and emit a loud, greppable signal.
+        logger.error("Vision inspect gate FAILED CLOSED (enabled but no frames sampled)",
+                     extra={"scene_id": scene_id, "gate_failed_closed": True})
+        return False, (
+            "vision: QA gate was enabled but could not sample any frame from the "
+            "render (frame extraction or the vision model all failed). Treated as "
+            "broken. Verify the render produced a readable video."
+        )
 
     bad = [(f, v) for f, v in verdicts if v in ("broken", "empty", "cluttered")]
-    # Majority vote: 2/3 must be bad to fail
-    if len(bad) >= 2:
+    # Fail when a TRUE majority (>50%) of the frames ACTUALLY sampled are bad,
+    # relative to what we collected (min 1 collected, guaranteed above) — the
+    # old absolute `>= 2` could never fail a 1-frame sample and mis-weighted a
+    # 2-frame one.
+    if len(bad) > len(verdicts) / 2:
         details = "; ".join(f"{v} at {int(f*100)}%" for f, v in bad)
-        return False, f"vision: render appears {bad[0][1]} ({details}). Check that construct() produces visible content."
+        labels = sorted({v for _, v in bad})
+        return False, f"vision: render appears {'/'.join(labels)} ({details}). Check that construct() produces visible content."
+
+    # Quality rubric (the content-quality gate) — only when the frames pass the
+    # binary check AND we know the scene's intent. One extra vision call on the
+    # midpoint frame.
+    if narration and mid_frame_url:
+        try:
+            return await _vision_quality_rubric(vision_client, mid_frame_url,
+                                                scene_id, narration, visual_desc or "")
+        except Exception as exc:
+            logger.warning("Vision quality rubric SKIPPED (gate error)",
+                           extra={"scene_id": scene_id, "gate_skipped": True,
+                                  "error": str(exc)[:200]})
     return True, ""
+
+
+def _assert_path_in_workspace(code_path: str) -> None:
+    """Reject any code_path that resolves outside the job workspace.
+
+    request.code_path is attacker-influenced (it names a file the validator
+    then opens and hands to manim). Without containment a '../' or absolute
+    path could read arbitrary host files (secrets, /etc/passwd) or feed manim
+    a file outside the sandboxed workspace. realpath() collapses symlinks and
+    '..' before the prefix check. Raises HTTPException(400) on escape.
+    """
+    workspace = os.path.realpath(settings.WORKSPACE_DIR)
+    resolved = os.path.realpath(code_path)
+    if resolved != workspace and not resolved.startswith(workspace + os.sep):
+        logger.error("code_path escapes workspace",
+                     extra={"code_path": code_path, "resolved": resolved,
+                            "workspace": workspace})
+        raise HTTPException(
+            status_code=400,
+            detail="code_path must be inside the job workspace",
+        )
 
 
 def detect_content_type(code_path: str) -> str:
     """Detect content type based on file content.
-    
+
     Args:
         code_path: Path to the code file
-        
+
     Returns:
         "manim" for Python/Manim code, "hyperframes" for HTML
     """
@@ -396,16 +615,8 @@ def validate_hyperframes(code_path: str, scene_id: int = None) -> tuple:
         return False, "", str(e)
 
 
-_FORBIDDEN_MODULES = {
-    "os", "subprocess", "socket", "sys", "importlib", "shutil",
-    "pathlib", "ctypes", "multiprocessing", "threading", "pty",
-    "signal", "resource", "fcntl", "tempfile", "http", "urllib",
-    "ftplib", "smtplib", "telnetlib", "xmlrpc",
-}
-_FORBIDDEN_BUILTINS = {
-    "eval", "exec", "compile", "__import__", "open", "breakpoint",
-    "memoryview", "globals", "locals",
-}
+# _FORBIDDEN_MODULES / _FORBIDDEN_BUILTINS come from shared/security.py (single
+# source shared with the code-generator sanitizer — see the import at the top).
 # Color constants the LLM keeps inventing that do not exist in Manim CE.
 # Value = suggested replacement (fed back to the code-generator on retry).
 _INVALID_COLOR_NAMES = {
@@ -507,6 +718,17 @@ def _preflight_ast_checks(source: str, scene_id: int) -> tuple:
             self.generic_visit(node)
 
         def visit_Attribute(self, node: ast.Attribute):
+            # Reflection/dunder escape: any `.__something__` access lets a
+            # name-based denylist be bypassed (().__class__.__bases__[0].
+            # __subclasses__(), obj.__globals__['__builtins__'], etc.). The
+            # denylist can never enumerate these, so block the whole shape.
+            if (len(node.attr) > 4
+                    and node.attr.startswith("__")
+                    and node.attr.endswith("__")):
+                issues.append(
+                    f"Security: forbidden dunder attribute access '.{node.attr}' "
+                    "(reflection escape)"
+                )
             if isinstance(node.value, ast.Name):
                 key = f"{node.value.id}.{node.attr}"
                 if key == "rate_functions.ease_out":
@@ -524,6 +746,19 @@ def _preflight_ast_checks(source: str, scene_id: int) -> tuple:
                 )
             self.generic_visit(node)
 
+        def visit_Subscript(self, node: ast.Subscript):
+            # Block indexing the namespace dicts: globals()['os'],
+            # builtins['eval'], __builtins__['__import__'] — the classic way to
+            # reach a forbidden name without ever writing it as a bare Name.
+            if isinstance(node.value, ast.Name) and node.value.id in {
+                "globals", "builtins", "__builtins__"
+            }:
+                issues.append(
+                    f"Security: forbidden subscript on '{node.value.id}' "
+                    "(namespace-dict escape)"
+                )
+            self.generic_visit(node)
+
     Checker().visit(tree)
 
     if issues:
@@ -532,12 +767,25 @@ def _preflight_ast_checks(source: str, scene_id: int) -> tuple:
 
 
 def _run_self_test() -> None:
-    """Fail-fast on stale images: confirm AST preflight catches a known-bad source."""
+    """Fail-fast on stale images: confirm AST preflight catches known-bad sources."""
     ok, _ = _preflight_ast_checks(_SELF_TEST_BAD_SOURCE, scene_id=0)
     if ok:
         logger.error("STALE IMAGE: AST preflight failed self-test (ShowCreation slipped through)")
         sys.exit(1)
-    logger.info("Validator self-test passed: AST preflight active")
+    sec_ok, sec_issues = _preflight_ast_checks(_SELF_TEST_MALICIOUS_SOURCE, scene_id=0)
+    if sec_ok or "Security" not in (sec_issues or ""):
+        logger.error("STALE IMAGE: security branch of AST preflight failed self-test "
+                     f"(import os / eval / getattr slipped through: {sec_issues!r})")
+        sys.exit(1)
+    # Each escape shape must be rejected on its own — import/subprocess/eval/
+    # __import__ and a dunder-traversal reflection escape.
+    for src in _SELF_TEST_SECURITY_SOURCES:
+        s_ok, s_issues = _preflight_ast_checks(src, scene_id=0)
+        if s_ok or "Security" not in (s_issues or ""):
+            logger.error("STALE IMAGE: security branch of AST preflight failed self-test "
+                         f"(source slipped through): {src!r} -> {s_issues!r}")
+            sys.exit(1)
+    logger.info("Validator self-test passed: AST preflight active (deprecated + security branches)")
 
 
 def _warmup_latex() -> None:
@@ -565,7 +813,7 @@ def _warmup_latex() -> None:
             )
         cmd = ["manim", "render", "-ql", "--media_dir", warmup_dir, scene_path, "Warmup"]
         with timed_block(logger, "latex warmup"):
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+            proc = run_proc(cmd, timeout=180)
         if proc.returncode == 0:
             with open(flag_path, "w") as f:
                 f.write("ok")
@@ -588,7 +836,14 @@ async def _on_startup() -> None:
 @traceable(run_type="chain", name="validator.validate")
 async def validate_code(request: ValidatorRequest):
     set_log_context(job_id=request.job_id, scene_id=request.scene_id)
-    content_type = detect_content_type(request.code_path)
+    # Containment gate: request.code_path is opened here and by every
+    # downstream path (detect_content_type, _validate_manim, _validate_hyperframes,
+    # and the manim subprocess). Reject anything resolving outside the workspace
+    # BEFORE the first open, so all of them are covered by one check.
+    _assert_path_in_workspace(request.code_path)
+    # Prefer the script-writer's authoritative content_type (sent by the
+    # orchestrator); only fall back to sniffing the file when absent.
+    content_type = (request.content_type or "").strip().lower() or detect_content_type(request.code_path)
     logger.info("Validation request", extra={"scene_id": request.scene_id,
                                               "content_type": content_type,
                                               "code_path": request.code_path})
@@ -744,15 +999,46 @@ async def _validate_manim(request):
                     logger.error("Manim produced 480p15 output — wrong quality flag", extra={"paths": mp4_files})
                     return ValidatorResponse(
                         scene_id=request.scene_id, success=False,
-                        error_log="Manim rendered 480p15 output; validator must run with -qh and produce 1080p60."
+                        error_log="Manim rendered 480p15 output; validator must run with -qh and produce 1080p30."
                     )
                 log_file(logger, "rendered", mp4_files[0], scene_id=request.scene_id)
                 logger.info("Render output found", extra={"scene_id": request.scene_id, "path": mp4_files[0]})
+
+                # A/V pacing gate: an overshooting render = dead air in the film
+                # (slot is narration-budgeted; extra video plays in silence) and
+                # animation beats drifting off the spoken words. Reject with a
+                # concrete pacing critique that feeds the retry prompt.
+                expected = request.expected_duration_seconds
+                if expected and expected > 0:
+                    actual = await asyncio.to_thread(_video_duration, mp4_files[0])
+                    limit = expected * _DURATION_OVERSHOOT_RATIO + _DURATION_OVERSHOOT_SLACK_S
+                    if actual and actual > limit:
+                        logger.warning("Render overshoots narration slot",
+                                       extra={"scene_id": request.scene_id,
+                                              "actual_s": round(actual, 1),
+                                              "expected_s": round(float(expected), 1)})
+                        return ValidatorResponse(
+                            scene_id=request.scene_id, success=False,
+                            error_log=(
+                                f"pacing: the render runs {actual:.1f}s but the narration slot is "
+                                f"{float(expected):.0f}s — the extra {actual - float(expected):.1f}s plays as "
+                                "SILENT static video and desyncs every beat from the voiceover. "
+                                f"Reduce total run_time + waits to land JUST UNDER {float(expected):.0f}s "
+                                "(shorten run_time values and trim self.wait() calls; do not drop content)."
+                            ),
+                        )
+
                 final_path = await asyncio.to_thread(
                     _reencode_for_seek, mp4_files[0], request.scene_id)
 
-                # Phase 4: vision model keyframe inspect (gated on VISION_INSPECT_ENABLED)
-                vision_ok, vision_error = await _vision_inspect_manim(final_path, request.scene_id)
+                # Phase 4: vision keyframe inspect + quality rubric (gated on
+                # VISION_INSPECT_ENABLED). The rubric critique feeds the
+                # code-gen retry prompt via error_log — the regenerate loop.
+                vision_ok, vision_error = await _vision_inspect_manim(
+                    final_path, request.scene_id,
+                    narration=request.narration_text,
+                    visual_desc=request.visual_description,
+                )
                 if not vision_ok:
                     return ValidatorResponse(
                         scene_id=request.scene_id,

@@ -17,7 +17,9 @@ OpenAI-compatible, so the standard image_url message format works unchanged.
 """
 
 import base64
+import os
 import re
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
 from typing import Dict, List
 
@@ -30,12 +32,29 @@ logger = get_logger(__name__)
 # Cap base64 payload: skip absurdly large files rather than blow up the request.
 _MAX_IMAGE_BYTES = 6 * 1024 * 1024  # 6 MB
 
-# Vision vet is a JUNK REJECTOR, not a fine ranker. Measured (llama-3.2-90b-vision
-# on NIM): on-topic ocean photo -> 8, off-topic paint -> 1, but 5 similar water
-# photos all tie at 8. So we drop anything below this and KEEP SigLIP's order
-# among survivors (SigLIP does the real continuous ranking).
-# ponytail: bump if junk leaks through; lower if good images get rejected.
-_VISION_KEEP_MIN = 5.0
+# Per-image scoring is a one-token reply; the LLM client's own timeout ceiling
+# is 300s, far too long here. Bound each scoring call so one stuck request can't
+# stall the whole vet. Tunable via env; default 30s.
+_VISION_CALL_TIMEOUT_S = float(os.getenv("VISION_SCORE_TIMEOUT_SECONDS", "30"))
+
+# The score is one small integer; ask for almost no output tokens. (Was 2000,
+# then 200 — a scoring reply is a single digit, so ~10 covers "8", "8.", or a
+# terse "Score: 8" while cutting generation latency and cost dramatically.)
+_VISION_SCORE_MAX_TOKENS = 10
+
+# Vision vet is a JUNK REJECTOR with a coarse tier, not a fine ranker.
+# Measured (llama-3.2-90b-vision on NIM): on-topic ocean photo -> 8, off-topic
+# paint -> 1, similar candidates tie.
+#
+# High tier (>= 8) = "directly shows the topic": always keep these first.
+# Mid tier (6-7) = acceptable-but-not-ideal: used ONLY to backfill when the
+#   high tier alone yields fewer than `keep`. This keeps the effective floor at
+#   7 in the common case while still surfacing something when nothing scores 8.
+# The old floor of 5 was the prompt's own definition of "loosely related", so
+# off-topic-ish photos survived and could outrank relevant ones.
+# SigLIP order is preserved WITHIN each tier.
+_VISION_TIER_HIGH = 8.0
+_VISION_TIER_MID = 6.0  # backfill floor; below this is rejected outright
 
 
 def _data_url(path: str) -> str:
@@ -48,11 +67,44 @@ def _data_url(path: str) -> str:
 
 
 def _parse_score(content: str):
-    """Pull the first 0-10 number out of the model reply; None if none found."""
-    m = re.search(r"\d+(?:\.\d+)?", content or "")
-    if not m:
+    """Pull the score out of the model reply; None if not found.
+
+    Prefers an explicitly labeled score ("Score: 8", "Rating - 7") when present,
+    since that is unambiguous. Otherwise falls back to the LAST in-range (0-10)
+    number — not the first number anywhere — because a chatty reply ("Considering
+    the 3 subjects... I rate it 8") used to be scored 3 by the first-number grab.
+    With max_tokens now ~10 the reply is almost always a bare integer anyway."""
+    text = content or ""
+    labeled = re.search(r"(?:score|rating)\D{0,4}(\d+(?:\.\d+)?)", text, re.IGNORECASE)
+    if labeled:
+        val = float(labeled.group(1))
+        if 0.0 <= val <= 10.0:
+            return val
+    candidates = [float(m) for m in re.findall(r"\d+(?:\.\d+)?", text)]
+    in_range = [c for c in candidates if 0.0 <= c <= 10.0]
+    if not in_range:
         return None
-    return max(0.0, min(10.0, float(m.group())))
+    return in_range[-1]
+
+
+def _score_one(client, model: str, content: list) -> str:
+    """One vision scoring completion, bounded by _VISION_CALL_TIMEOUT_S.
+
+    The LLM client's own read timeout is 300s (code-gen sized); a scoring reply
+    is a single token, so a stuck request here would otherwise stall the whole
+    per-image loop. Runs the (blocking) create() in a helper thread and abandons
+    it on timeout. vision_select's per-image try/except turns any raise here
+    (including FutureTimeoutError) into score=None for that image."""
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        future = ex.submit(
+            client.chat.completions.create,
+            model=model,
+            messages=[{"role": "user", "content": content}],
+            temperature=0.0,
+            max_tokens=_VISION_SCORE_MAX_TOKENS,
+        )
+        resp = future.result(timeout=_VISION_CALL_TIMEOUT_S)
+    return resp.choices[0].message.content or ""
 
 
 def vision_select(
@@ -117,13 +169,12 @@ def vision_select(
         ]
         try:
             attempted += 1
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": content}],
-                temperature=0.0,
-                max_tokens=2000,  # headroom for reasoning models; we only read the number
-            )
-            score = _parse_score(resp.choices[0].message.content or "")
+            reply = _score_one(client, model, content)  # bounded by per-call timeout
+            score = _parse_score(reply)
+        except FutureTimeoutError:
+            logger.warning("Vision vet score timed out for image",
+                           extra={"path": p, "timeout_s": _VISION_CALL_TIMEOUT_S})
+            score = None
         except Exception as e:
             logger.warning("Vision vet score failed for image", extra={"path": p, "error": str(e)})
             score = None
@@ -137,19 +188,27 @@ def vision_select(
         )
         return paths[:keep]
 
-    # `scored` is in input (SigLIP) order. Keep on-topic survivors in that order —
-    # do NOT sort by the score: the model ties similar candidates, so sorting adds
-    # false precision. The vet only rejects junk; SigLIP already ranked.
-    survivors = [p for s, _, p in scored if s >= _VISION_KEEP_MIN]
+    # `scored` is in input (SigLIP) order. Tier survivors coarsely and keep
+    # SigLIP's order WITHIN each tier — never fine-sort by the score: the model
+    # ties similar candidates, so a full sort adds false precision.
+    # Prefer the high tier (>=8, directly shows the topic). Only backfill from
+    # the mid tier (6-7) when high alone gives fewer than `keep`.
+    high = [p for s, _, p in scored if s >= _VISION_TIER_HIGH]
+    mid = [p for s, _, p in scored if _VISION_TIER_MID <= s < _VISION_TIER_HIGH]
+    survivors = high if len(high) >= keep else high + mid
     if not survivors:
         best = max(s for s, _, _ in scored)
+        # An off-topic image is WORSE than no image — the scene renders fine on
+        # its palette background. (The old fallback shipped the junk anyway.)
         logger.warning(
-            "Vision vet rejected all %d candidates (best=%.1f < %.1f); keeping SigLIP order",
-            len(scored), best, _VISION_KEEP_MIN,
+            "Vision vet rejected all %d candidates (best=%.1f < %.1f); scene will "
+            "render without stock imagery",
+            len(scored), best, _VISION_TIER_MID,
         )
-        return paths[:keep]
+        return []
     rejected = len(scored) - len(survivors)
     logger.info("Vision vet kept on-topic images",
                 extra={"attempted": attempted, "scored": len(scored),
-                       "rejected": rejected, "kept": min(keep, len(survivors))})
+                       "rejected": rejected, "high_tier": len(high),
+                       "mid_tier": len(mid), "kept": min(keep, len(survivors))})
     return survivors[:keep]

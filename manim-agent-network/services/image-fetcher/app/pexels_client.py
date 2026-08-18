@@ -15,6 +15,8 @@ import httpx
 
 from shared.config import settings
 
+from .http_retry import get_with_backoff
+
 logger = logging.getLogger(__name__)
 
 PEXELS_API_BASE_URL = "https://api.pexels.com/v1/search"
@@ -59,7 +61,8 @@ async def search_pexels(keywords: List[str]) -> Dict[str, str]:
         for term in terms:
             params = {"query": term, "per_page": PER_TERM, "orientation": "landscape"}
             try:
-                response = await client.get(PEXELS_API_BASE_URL, params=params, headers=headers)
+                response = await get_with_backoff(client, PEXELS_API_BASE_URL,
+                                                  params=params, headers=headers)
                 if response.status_code >= 400:
                     logger.warning(
                         f"Pexels API status {response.status_code} for term '{term}': "
@@ -69,7 +72,10 @@ async def search_pexels(keywords: List[str]) -> Dict[str, str]:
 
                 photos = response.json().get("photos", [])
                 for photo in photos:
-                    large_url = (photo.get("src") or {}).get("large")
+                    src = photo.get("src") or {}
+                    # large2x = max 1880×1300 (close to 1920×1080 canvas, minimal upscale).
+                    # original = full res but potentially huge; skip to avoid 4MB inline limit.
+                    large_url = src.get("large2x") or src.get("large")
                     if large_url and large_url not in results:
                         results[large_url] = photo.get("alt") or ""
             except httpx.RequestError as e:

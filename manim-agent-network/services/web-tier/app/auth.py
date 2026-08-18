@@ -44,7 +44,7 @@ def verify_token(token: str) -> Principal:
         )
     except jwt.PyJWTError as e:
         raise HTTPException(401, f"invalid token: {e}")
-    meta = claims.get("public_metadata") or claims.get("metadata") or {}
+    meta = claims.get("public_metadata") or {}
     role = meta.get("role", "user")
     return Principal(clerk_id=claims["sub"], role=role, email=claims.get("email", ""))
 
@@ -65,9 +65,10 @@ async def require_user(p: Principal = Depends(get_principal)) -> Principal:
 
 
 async def require_admin(p: Principal = Depends(get_principal)) -> Principal:
-    # source of truth is the DB row, not the (cached) JWT claim, so a revoked
-    # admin loses access immediately rather than at next token refresh
+    """Admin gate: verified Clerk principal AND role='admin' in the LOCAL users
+    table (DB is authoritative so a revocation takes effect immediately, without
+    waiting for the Clerk token's metadata to refresh)."""
     user = db.get_or_create_user(p.clerk_id, p.email, p.role)
-    if (user or {}).get("role") != "admin":
-        raise HTTPException(403, "admin only")
-    return p
+    if not user or user.get("role") != "admin":
+        raise HTTPException(403, "admin role required")
+    return Principal(clerk_id=p.clerk_id, role="admin", email=p.email)

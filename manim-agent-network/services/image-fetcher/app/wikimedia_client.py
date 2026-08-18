@@ -19,6 +19,8 @@ from typing import Dict, List
 
 import httpx
 
+from .http_retry import get_with_backoff
+
 logger = logging.getLogger(__name__)
 
 COMMONS_API_BASE_URL = "https://commons.wikimedia.org/w/api.php"
@@ -90,7 +92,7 @@ async def search_wikimedia(keywords: List[str]) -> Dict[str, str]:
                 "format": "json",
             }
             try:
-                response = await client.get(COMMONS_API_BASE_URL, params=params)
+                response = await get_with_backoff(client, COMMONS_API_BASE_URL, params=params)
                 if response.status_code >= 400:
                     logger.warning(
                         f"Commons API status {response.status_code} for term '{term}': "

@@ -60,9 +60,10 @@ def test_audit_off_budget():
 
 def test_repair_budgets_sum_near_target():
     rb = budget.repair_budgets(_scenes(10, 30, 66), 600)
-    total = sum(b["duration_budget_s"] for b in rb)
-    assert abs(total - 600) <= 12                  # rounding tolerance
-    assert all(b["word_budget"] >= 8 for b in rb)
+    # ONE currency now: target_words. Reconstruct seconds via WPS and check it lands near target.
+    total_s = sum(b["target_words"] for b in rb) / budget.WPS
+    assert abs(total_s - 600) <= 12                 # rounding tolerance
+    assert all(b["target_words"] >= 8 for b in rb)  # per-scene floor
 
 
 def test_clamp_durations_respects_narration():

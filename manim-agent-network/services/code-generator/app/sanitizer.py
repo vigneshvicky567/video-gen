@@ -1,24 +1,15 @@
 import ast
 from typing import List, Tuple, Optional
 
+# Single-source security constants shared with the validator's AST preflight —
+# the two gates used to hold divergent hand-copied lists (F185).
+from shared.security import FORBIDDEN_MODULES, FORBIDDEN_BUILTINS
+
 # Scene base classes recognised by Manim CE.
 _SCENE_BASES = {
     "Scene", "MovingCameraScene", "ThreeDScene", "ZoomedScene",
     "VectorScene", "LinearTransformationScene", "ReconfigurableScene",
     "SpecialThreeDScene",
-}
-
-# Modules/builtins whose presence in generated code is a security violation.
-FORBIDDEN_MODULES = {
-    "os", "subprocess", "socket", "sys", "importlib", "shutil",
-    "pathlib", "ctypes", "multiprocessing", "threading", "pty",
-    "signal", "resource", "fcntl", "tempfile", "http", "urllib",
-    "ftplib", "smtplib", "telnetlib", "xmlrpc",
-}
-FORBIDDEN_BUILTINS = {
-    "eval", "exec", "compile", "__import__", "open", "breakpoint",
-    "memoryview", "vars", "globals", "locals", "getattr", "setattr",
-    "delattr",
 }
 
 
@@ -150,6 +141,26 @@ def sanitize_manim_code(code: str, scene_id: Optional[int] = None) -> Tuple[str,
                       "expo", "circ", "back", "elastic", "bounce")
     }
 
+    # Names bound at MODULE scope (top-level def / assignment / import). A user may
+    # legitimately define their own easing function and pass it as rate_func — that
+    # is valid and must NOT be dropped. Only a name that is neither a known rate
+    # function NOR defined anywhere in this module is a genuine NameError to strip.
+    module_scope_names: set = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            module_scope_names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for tgt in node.targets:
+                if isinstance(tgt, ast.Name):
+                    module_scope_names.add(tgt.id)
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name):
+                module_scope_names.add(node.target.id)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                # `import x.y as z` binds z; `import x.y` binds x; `from m import a` binds a.
+                module_scope_names.add(alias.asname or alias.name.split(".")[0])
+
     def _is_bg_assign_target(t: ast.expr) -> bool:
         """Match `config.background_color` and `*.camera.background_color`."""
         if not (isinstance(t, ast.Attribute) and t.attr == "background_color"):
@@ -237,6 +248,10 @@ def sanitize_manim_code(code: str, scene_id: Optional[int] = None) -> Tuple[str,
                             attr=name, ctx=ast.Load()), kw.value)
                         warnings.append(
                             f"Qualified rate_func: {name} -> rate_functions.{name}")
+                    elif name in module_scope_names:
+                        # A user-defined easing function (or other module-scope
+                        # binding) is valid — leave it untouched, don't drop it.
+                        pass
                     else:
                         warnings.append(
                             f"Dropped unknown rate_func={name} (would NameError)")
@@ -253,12 +268,33 @@ def sanitize_manim_code(code: str, scene_id: Optional[int] = None) -> Tuple[str,
         # level — config.background_color is read when the camera initializes,
         # before construct() runs, so only a module-level assignment works.
         # All LLM-written background assignments were stripped above, so this
-        # injection is unconditional and the single source of truth.
+        # injection is the single source of truth.
         if isinstance(new_tree, ast.Module):
             insert_at = 0
             for i, stmt in enumerate(new_tree.body):
                 if isinstance(stmt, (ast.Import, ast.ImportFrom)):
                     insert_at = i + 1
+            # `config` and `WHITE` are bare names here — they only resolve under
+            # `from manim import *`. If the code doesn't star-import manim, this
+            # assignment would raise NameError, so emit an explicit import for the
+            # two names right before it. (Guard against the star import.)
+            has_star = any(
+                isinstance(s, ast.ImportFrom) and s.module == "manim"
+                and any(a.name == "*" for a in s.names)
+                for s in new_tree.body
+            )
+            if not has_star:
+                import_stmt = ast.ImportFrom(
+                    module="manim",
+                    names=[ast.alias(name="config", asname=None),
+                           ast.alias(name="WHITE", asname=None)],
+                    level=0,
+                )
+                new_tree.body.insert(insert_at, import_stmt)
+                insert_at += 1
+                warnings.append(
+                    "No `from manim import *` — added `from manim import config, WHITE` "
+                    "so the injected background assignment resolves")
             bg_assign = ast.Assign(
                 targets=[ast.Attribute(value=ast.Name(id="config", ctx=ast.Load()),
                                        attr="background_color", ctx=ast.Store())],

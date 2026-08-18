@@ -388,6 +388,13 @@ media-tooltip-group {
   }
 }
 
+/* Keep CC and speed buttons in the layout even when the web component would
+   otherwise hide them (no tracks loaded, video not ready, etc.). */
+.media-default-skin .media-button--captions,
+.media-default-skin .media-button--playback-rate {
+  display: flex !important;
+}
+
 .media-default-skin .media-button--playback-rate {
   padding: 0;
   font-variant-numeric: tabular-nums;
@@ -1244,4 +1251,20 @@ media-tooltip-group {
 .screen .media-default-skin--video .media-controls .media-button-group:first-child,
 .screen .media-default-skin--video .media-controls .media-button-group:last-child {
   flex: 0 0 auto;
+}
+
+/* ── Local-robust playback fallback ──────────────────────────────────────────
+   The <video-player> UI is defined by a CDN module (video-ui.js). If that CDN
+   is slow/blocked/unreachable on a local box, the custom element never upgrades
+   and its static <media-buffering-indicator> spinner stays stuck over a video
+   that is actually ready — this is the "buffering on local" symptom.
+   :not(:defined) matches a custom element ONLY while it is un-upgraded, so this
+   block affects nothing once the CDN loads. It hides the dead skin overlays and
+   lets the inner <video controls> play natively — zero external dependency. */
+video-player:not(:defined),
+video-player:not(:defined) media-container { display: block; width: 100%; }
+video-player:not(:defined) media-buffering-indicator,
+video-player:not(:defined) media-error-dialog { display: none !important; }
+video-player:not(:defined) video {
+  display: block; width: 100%; height: auto; background: #000;
 }

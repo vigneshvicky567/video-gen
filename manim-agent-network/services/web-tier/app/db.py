@@ -97,6 +97,45 @@ def set_user_role(clerk_id: str, role: str) -> int:
 
 
 # --- jobs --------------------------------------------------------------------
+def create_job_gated(job_id, owner, topic, brief, target_duration_s, *,
+                     daily_quota: int, global_cap: int, month: str,
+                     month_budget: int, idempotency_key=None):
+    """Quota gates + insert in ONE transaction.
+
+    The old flow did four separate reads then an insert — two concurrent
+    /generate calls could both pass every gate and both insert (check-then-act
+    race). Reading and inserting inside one transaction closes the window to
+    the DB's isolation guarantees. Returns (job_row, "") on success or
+    (None, reason) when a gate rejects.
+    ponytail: READ COMMITTED still allows a razor-thin race under heavy
+    concurrent load; move to SERIALIZABLE + retry if job volume ever warrants.
+    """
+    now = _now()
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    with get_engine().begin() as c:
+        today = c.execute(select(func.count()).select_from(jobs).where(and_(
+            jobs.c.owner_user_id == owner, jobs.c.created_at >= midnight,
+        ))).scalar_one()
+        if today >= daily_quota:
+            return None, "daily job quota reached"
+        active = c.execute(select(func.count()).select_from(jobs).where(
+            jobs.c.status.in_(_ACTIVE))).scalar_one()
+        if active >= global_cap:
+            return None, "system busy — try again shortly"
+        minutes = c.execute(
+            select(func.coalesce(func.sum(usage_minutes.c.runner_minutes), 0))
+            .where(usage_minutes.c.month == month)).scalar_one()
+        if int(minutes or 0) >= month_budget:
+            return None, "monthly render budget reached — resets next month"
+        c.execute(insert(jobs).values(
+            id=job_id, owner_user_id=owner, topic=topic, brief=brief,
+            status="queued", state=None, video_url=None,
+            target_duration_s=target_duration_s, idempotency_key=idempotency_key,
+            created_at=now, updated_at=now,
+        ))
+    return get_job(job_id), ""
+
+
 def create_job(job_id, owner, topic, brief, target_duration_s, idempotency_key=None):
     now = _now()
     with get_engine().begin() as c:

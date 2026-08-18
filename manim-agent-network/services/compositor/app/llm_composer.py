@@ -25,6 +25,77 @@ CAPTION_Z_INDEX = 1000
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?;:])\s+")
 
 
+def _vtt_ts(t: float) -> str:
+    """Seconds -> WebVTT timestamp HH:MM:SS.mmm."""
+    if t < 0:
+        t = 0.0
+    h = int(t // 3600)
+    m = int((t % 3600) // 60)
+    s = t % 60
+    return f"{h:02d}:{m:02d}:{s:06.3f}"
+
+
+def build_vtt(
+    scene_timings: List[SceneTimingRecord],
+    audio_segments: Optional[Dict[Any, list]],
+    scene_plans: Optional[List[Any]],
+) -> str:
+    """Build a WebVTT track for the whole film. Cues come from the REAL per-sentence
+    TTS segments (audio_segments) so captions match the spoken audio exactly — no
+    word-count drift. For any scene without segments (e.g. edge-tts/piper fallback)
+    we fall back to the word-count windows so it still has captions.
+    """
+    def _field(plan, key, default=None):
+        return plan.get(key, default) if isinstance(plan, dict) else getattr(plan, key, default)
+
+    narr: Dict[int, str] = {}
+    for p in (scene_plans or []):
+        sid = _field(p, "scene_id")
+        if sid is not None:
+            narr[int(sid)] = _field(p, "narration_text", "") or ""
+
+    segs = audio_segments or {}
+    def _segs_for(sid: int) -> list:
+        return segs.get(sid) or segs.get(str(sid)) or []
+
+    cues: List[tuple] = []
+    for t in scene_timings:
+        sid = int(t.scene_id)
+        base = t.start_time_seconds
+        scene_segs = _segs_for(sid)
+        if scene_segs:
+            for s in scene_segs:
+                try:
+                    start = base + float(s.get("start", 0.0))
+                    dur = float(s.get("duration", 0.0))
+                except (TypeError, ValueError):
+                    continue
+                txt = (s.get("text") or "").strip()
+                if txt and dur > 0:
+                    cues.append((start, start + dur, txt))
+        else:
+            # No real cue sheet — approximate from narration (matches burned path).
+            chunks = chunk_narration(narr.get(sid, ""))
+            if not chunks:
+                continue
+            window = max(t.actual_video_duration_seconds, t.actual_audio_duration_seconds)
+            audio_dur = t.actual_audio_duration_seconds if t.audio_path else 0.0
+            for c_start, c_dur, c_text in allocate_caption_windows(chunks, audio_dur, window, base):
+                if c_text.strip() and c_dur > 0:
+                    cues.append((c_start, c_start + c_dur, c_text.strip()))
+
+    cues.sort(key=lambda c: c[0])
+    out: List[str] = ["WEBVTT", ""]
+    for i, (a, b, txt) in enumerate(cues, start=1):
+        if b <= a:
+            b = a + 0.5
+        out.append(str(i))
+        out.append(f"{_vtt_ts(a)} --> {_vtt_ts(b)}")
+        out.append(txt)
+        out.append("")
+    return "\n".join(out)
+
+
 def chunk_narration(text: str, max_chars: int = CAPTION_MAX_CHARS) -> List[str]:
     """Split narration into caption-sized chunks on word boundaries.
 
@@ -88,7 +159,14 @@ def allocate_caption_windows(
     cur = round(scene_start, 3)
     for i, (chunk, w) in enumerate(zip(chunks, weights)):
         if i == len(chunks) - 1:
+            # Rounding drift can push cur past end_limit, going negative — that
+            # silently DROPPED the last caption. Clamp to a minimal window and
+            # log instead: a 1ms cue beats vanished text.
             dur = round(end_limit - cur, 3)
+            if dur <= 0:
+                logger.warning("Final caption window clamped (drift %.3fs) for chunk %r",
+                               dur, chunk[:60])
+                dur = 0.001
         else:
             dur = round(window * w / total_w, 3)
         if dur <= 0:
@@ -284,7 +362,9 @@ def compose_html(
             )
         track += 1
 
-        if narration_raw.strip():
+        if settings.BURN_CAPTIONS and narration_raw.strip():
+            # Burned-in captions (opt-in via BURN_CAPTIONS). Default OFF: captions
+            # ship as a soft WebVTT track (see build_vtt) so viewers can toggle CC.
             # Chunked captions: split narration into sentence-sized pieces, each
             # with its own timed window. Sequential windows on a single reserved
             # track (0) -> zero overlap; no 120-char truncation -> no lost text.

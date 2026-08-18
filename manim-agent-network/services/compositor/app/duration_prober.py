@@ -7,10 +7,10 @@ This module provides functionality to:
 
 import json
 import logging
-import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 
+from shared.proc import run_proc, ProcTimeout
 from shared.schemas.common import SceneTimingRecord
 
 logger = logging.getLogger(__name__)
@@ -41,23 +41,44 @@ def probe_duration(file_path: str) -> float:
     if file_path.lower().endswith(".html"):
         return 0.0
 
+    # Probe the CONTAINER (format) duration, not streams[0]: stream order is
+    # arbitrary (video/audio/cover-art) and many MP4/WebM containers omit
+    # per-stream duration entirely — it lives only in `format`. Fall back to
+    # the max of per-stream durations for containers that omit format duration.
     cmd = [
         "ffprobe", "-v", "quiet",
         "-print_format", "json",
-        "-show_streams",
+        "-show_entries", "format=duration:stream=duration",
         file_path
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    
+    try:
+        result = run_proc(cmd, timeout=120)
+    except ProcTimeout:
+        raise AssemblyError(f"ffprobe timed out probing {file_path}")
+
     if result.returncode != 0:
         raise AssemblyError(f"ffprobe failed for {file_path}: {result.stderr}")
-    
+
     try:
         data = json.loads(result.stdout)
-        duration = float(data["streams"][0]["duration"])
-        return round(duration, 3)
-    except (KeyError, IndexError, ValueError) as e:
-        raise AssemblyError(f"ffprobe missing stream data for {file_path}: {e}")
+    except ValueError as e:
+        raise AssemblyError(f"ffprobe emitted non-JSON for {file_path}: {e}")
+
+    fmt_dur = (data.get("format") or {}).get("duration")
+    if fmt_dur is not None:
+        try:
+            return round(float(fmt_dur), 3)
+        except (TypeError, ValueError):
+            pass
+    stream_durs = []
+    for s in data.get("streams") or []:
+        try:
+            stream_durs.append(float(s["duration"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if stream_durs:
+        return round(max(stream_durs), 3)
+    raise AssemblyError(f"ffprobe found no duration (format or streams) for {file_path}")
 
 
 def compute_scene_timings(
@@ -197,7 +218,7 @@ def freeze_pad_renders(
             str(out),
         ]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            result = run_proc(cmd, timeout=300)
         except Exception as e:  # noqa: BLE001 — never let padding abort a job
             logger.warning("freeze-pad ffmpeg crashed for scene %s (%s); keeping original render",
                            t.scene_id, e)
@@ -210,11 +231,22 @@ def freeze_pad_renders(
             updated.append(t)
             continue
 
-        logger.info("freeze-padded scene %s: %.3fs video -> %.3fs slot",
-                    t.scene_id, t.actual_video_duration_seconds, t.actual_audio_duration_seconds)
+        # Re-probe the padded output instead of ASSUMING tpad produced exactly
+        # slot length — frame-boundary rounding can differ, and downstream
+        # timings are computed from this value.
+        try:
+            padded_dur = probe_duration(str(out))
+        except AssemblyError:
+            padded_dur = round(t.actual_audio_duration_seconds, 3)
+            logger.warning("freeze-pad re-probe failed for scene %s; using slot length",
+                           t.scene_id)
+
+        logger.info("freeze-padded scene %s: %.3fs video -> %.3fs (slot %.3fs)",
+                    t.scene_id, t.actual_video_duration_seconds, padded_dur,
+                    t.actual_audio_duration_seconds)
         updated.append(t.model_copy(update={
             "render_path": str(out),
-            "actual_video_duration_seconds": round(t.actual_audio_duration_seconds, 3),
+            "actual_video_duration_seconds": padded_dur,
         }))
 
     return updated
